@@ -32,6 +32,7 @@ const progressPanel = requiredElement("progress-panel");
 const errorPanel = requiredElement("error-panel");
 const errorMessage = requiredElement("error-message");
 const workspace = requiredElement("workspace");
+const dropOverlay = requiredElement("drop-overlay");
 const resultSummary = requiredElement("result-summary");
 const resultStats = requiredElement("result-stats");
 const resultWarnings = requiredElement<HTMLDetailsElement>("result-warnings");
@@ -42,6 +43,7 @@ const aboutCloseButton = requiredButton("about-close");
 
 let currentResult: RecognitionResult | null = null;
 let busy = false;
+const appWindow = getCurrentWindow();
 
 const baseUrl = import.meta.env.BASE_URL;
 const api = new alphaTab.AlphaTabApi(requiredElement("alphaTab"), {
@@ -96,6 +98,23 @@ void listen("open-about", () => {
     aboutDialog.showModal();
   }
 });
+void appWindow.onDragDropEvent((event) => {
+  const payload = event.payload;
+  if (payload.type === "enter") {
+    dropOverlay.hidden = false;
+    return;
+  }
+  if (payload.type === "leave") {
+    dropOverlay.hidden = true;
+    return;
+  }
+  if (payload.type === "drop") {
+    dropOverlay.hidden = true;
+    if (payload.paths.length > 0) {
+      void recognizePaths(payload.paths);
+    }
+  }
+});
 
 async function chooseAndRecognize(): Promise<void> {
   if (busy) {
@@ -116,7 +135,13 @@ async function chooseAndRecognize(): Promise<void> {
   if (!inputPaths || inputPaths.length === 0) {
     return;
   }
+  await recognizePaths(inputPaths);
+}
 
+async function recognizePaths(inputPaths: string[]): Promise<void> {
+  if (busy) {
+    return;
+  }
   busy = true;
   chooseFileButton.disabled = true;
   chooseAnotherButton.disabled = true;
@@ -134,7 +159,7 @@ async function chooseAndRecognize(): Promise<void> {
       inputPaths,
     });
     currentResult = result;
-    await getCurrentWindow().setSize(new LogicalSize(1080, 760));
+    await appWindow.setSize(new LogicalSize(1080, 760));
     api.load(base64ToBytes(result.gp5Base64), [0]);
     progressPanel.hidden = true;
   } catch (error) {

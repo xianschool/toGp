@@ -237,6 +237,22 @@ body.has-result .progress {
   display: none;
 }
 
+.drop-overlay {
+  position: fixed;
+  z-index: 20;
+  inset: 14px;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--accent);
+  border-radius: 16px;
+  background: rgba(244, 241, 234, 0.93);
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  pointer-events: none;
+}
+
 .about-dialog {
   width: min(420px, calc(100vw - 40px));
   padding: 0;
