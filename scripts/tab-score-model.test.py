@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 
@@ -209,6 +210,42 @@ class TabScoreModelTest(unittest.TestCase):
 
         self.assertEqual(adapter["id"], "musescore-vector-tab")
         self.assertEqual(adapter["sourceFamily"], "musescore")
+
+
+    def test_guitar_pro_filter_drops_chord_grids_and_keeps_full_width_rests(self) -> None:
+        systems = [
+            SimpleNamespace(events=[], start_x=138.4, end_x=454.0),
+            SimpleNamespace(events=[], start_x=28.3, end_x=566.9),
+            SimpleNamespace(events=[object()], start_x=187.1, end_x=405.2),
+        ]
+
+        filtered = RUNNER.filter_adapter_systems(
+            systems,
+            595.0,
+            "guitar-pro-vector-tab",
+        )
+
+        self.assertEqual(filtered, systems[1:])
+
+    def test_gpbravura_vector_pdf_selects_guitar_pro_adapter(self) -> None:
+        adapter = RUNNER.select_tab_adapter(
+            {
+                "renderType": "vector-text",
+                "sourceCandidates": [
+                    {"family": "guitar-pro", "confidence": 0.95}
+                ],
+                "features": {"imageFiles": 0, "pdfFiles": 1},
+                "files": [
+                    {
+                        "kind": "pdf",
+                        "renderType": "vector-text",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(adapter["id"], "guitar-pro-vector-tab")
+        self.assertEqual(adapter["sourceFamily"], "guitar-pro")
 
 
 if __name__ == "__main__":

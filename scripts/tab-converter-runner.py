@@ -35,6 +35,10 @@ TAB_ADAPTERS = {
         "displayName": "MuseScore 矢量六线谱",
         "description": "使用 MuseScore 的文本对象、Leland/Edwin 字体和矢量谱表结构。",
     },
+    "guitar-pro-vector-tab": {
+        "displayName": "Guitar Pro 矢量六线谱",
+        "description": "使用 GPBravura 字体和整页宽六弦系统，并排除顶部和弦图网格。",
+    },
 }
 CHORD_NAME = re.compile(
     r"^[A-G][#b]?(?:m|maj|min|sus|add|dim|aug|\u00b0)?\d*(?:[-+]\d+)?"
@@ -123,12 +127,25 @@ def extract_pdf_metadata(data: bytes) -> tuple[str, str]:
                 < page.width * 0.25
                 and 2 <= len(row["text"]) <= 30
                 and not row["text"].startswith("=")
+                and not (
+                    row["text"].startswith("(") and row["text"].endswith(")")
+                )
                 and row["size"] < title_row["size"]
             ]
             artist = max(artist_rows, key=lambda row: row["size"], default={"text": ""})["text"]
             return title, artist
     except Exception:
         return "", ""
+
+
+def filter_adapter_systems(systems: list, page_width: float, profile: str) -> list:
+    if profile != "guitar-pro-vector-tab":
+        return systems
+    return [
+        system
+        for system in systems
+        if system.events or (system.end_x - system.start_x) >= 0.55 * page_width
+    ]
 
 
 def patch_tab_reader() -> None:
@@ -307,7 +324,11 @@ def patch_tab_reader() -> None:
         previous = prefer_rectangular_bar_lines
         prefer_rectangular_bar_lines = rectangular >= 4
         try:
-            systems = original_extract(page)
+            systems = filter_adapter_systems(
+                original_extract(page),
+                page.width,
+                ACTIVE_TAB_PROFILE,
+            )
             if ACTIVE_TAB_PROFILE == "monochrome-watermark-tab":
                 for system in systems:
                     if system.string_count != 6 or len(system.bars) - 1 == 3:
@@ -351,6 +372,12 @@ def patch_tab_reader() -> None:
                     engraved._staff_lines(page.segments, page.width)
                 )
                 if len(staff) == 6
+                and (
+                    ACTIVE_TAB_PROFILE != "guitar-pro-vector-tab"
+                    or min(line.x0 for line in staff) >= 0
+                    and max(line.x1 for line in staff) - min(line.x0 for line in staff)
+                    >= 0.55 * page.width
+                )
             ]
             tab_systems = [
                 (system, staff)
@@ -705,6 +732,14 @@ def select_tab_adapter(source_diagnosis: dict) -> dict:
     ):
         selected = "musescore-vector-tab"
         reason = "检测到 MuseScore 元数据或 Leland/Edwin 字体，启用 MuseScore 矢量文本适配。"
+    elif (
+        vector_pdfs
+        and top_candidate
+        and top_candidate.get("family") == "guitar-pro"
+        and top_candidate.get("confidence", 0) >= 0.7
+    ):
+        selected = "guitar-pro-vector-tab"
+        reason = "检测到 GPBravura 字体，启用 Guitar Pro 矢量谱表与和弦图过滤规则。"
     return {
         "id": selected,
         "displayName": TAB_ADAPTERS[selected]["displayName"],

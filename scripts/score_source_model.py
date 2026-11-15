@@ -80,6 +80,7 @@ def pdf_source_candidates(
         (("opus", "inkpen"), "sibelius", 0.72),
         (("maestro", "engraver"), "finale", 0.72),
         (("emmentaler",), "lilypond", 0.82),
+        (("gpbravura",), "guitar-pro", 0.95),
     ):
         matched = [term for term in terms if term in font_names]
         if matched:

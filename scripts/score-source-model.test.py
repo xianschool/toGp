@@ -26,6 +26,16 @@ class ScoreSourceModelTest(unittest.TestCase):
         self.assertTrue(any("metadata" in item for item in candidates[0]["evidence"]))
         self.assertTrue(any("font" in item for item in candidates[0]["evidence"]))
 
+    def test_gpbravura_font_identifies_guitar_pro(self) -> None:
+        candidates = model.pdf_source_candidates(
+            "vector-text",
+            {},
+            "arialmt gpbravura timesnewromanpsmt",
+        )
+
+        self.assertEqual(candidates[0]["family"], "guitar-pro")
+        self.assertEqual(candidates[0]["confidence"], 0.95)
+
     def test_red_chord_image_selects_digital_tab_profile(self) -> None:
         result = model.image_classification(
             {
