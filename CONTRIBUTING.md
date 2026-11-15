@@ -49,4 +49,4 @@ Keep changes focused. Add or update tests when changing parsing, validation, or 
 
 ## Licensing
 
-By contributing, you agree that your contribution can be distributed under the repository's AGPL-3.0-only license. Do not contribute code or assets under an incompatible license without updating `THIRD_PARTY_NOTICES.md`.
+By contributing, you agree that your contribution can be distributed under the repository's MIT license. Do not contribute code or assets under an incompatible license without updating `THIRD_PARTY_NOTICES.md`.

@@ -3,7 +3,7 @@ name = "togp"
 version = "0.1.0"
 description = "Convert scanned guitar scores into editable Guitar Pro files"
 authors = ["toGp contributors"]
-license = "AGPL-3.0-only"
+license = "MIT"
 edition = "2021"
 rust-version = "1.77.2"
 

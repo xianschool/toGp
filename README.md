@@ -104,8 +104,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request guidance
 
 ## Licensing
 
-toGp is licensed under AGPL-3.0-only. The bundled PDF-to-GP5 converter is MIT-licensed. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+toGp is licensed under the MIT License. Copyright (c) 2026 Mumu. The bundled PDF-to-GP5 converter is also MIT-licensed; PyGuitarPro and other third-party components remain under their own licenses. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-When publishing a binary release, publish the matching source repository and release tag alongside the DMG.
+When publishing a binary release, publishing the matching source tag alongside the DMG is recommended for reproducible builds.
 
 Guitar Pro is a trademark of its respective owner. toGp is not affiliated with or endorsed by Guitar Pro or Arobas Music.
