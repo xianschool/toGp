@@ -85,7 +85,7 @@ if (!(await hasExpectedHash(imagePath))) {
   throw new Error("Audiveris download checksum mismatch.");
 }
 
-const mountPoint = await mkdtemp(path.join(tmpdir(), "togpx-audiveris-"));
+const mountPoint = await mkdtemp(path.join(tmpdir(), "togp-audiveris-"));
 let mounted = false;
 
 try {
@@ -179,7 +179,7 @@ async function download(url, destinationPath, accept = "*/*") {
       "--header",
       `Accept: ${accept}`,
       "--header",
-      "User-Agent: ToGpx-build",
+      "User-Agent: toGp-build",
       "--output",
       destinationPath,
       url,

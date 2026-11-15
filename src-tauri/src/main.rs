@@ -1,3 +1,3 @@
 fn main() {
-    togpx_lib::run();
+    togp_lib::run();
 }

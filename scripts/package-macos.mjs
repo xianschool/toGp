@@ -11,8 +11,8 @@ const releaseDir = path.join(
   target,
   "release",
 );
-const appPath = path.join(releaseDir, "bundle/macos/ToGpx.app");
-const dmgPath = path.join(releaseDir, "bundle/dmg/ToGpx_0.1.0_aarch64.dmg");
+const appPath = path.join(releaseDir, "bundle/macos/toGp.app");
+const dmgPath = path.join(releaseDir, "bundle/dmg/toGp_0.1.0_aarch64.dmg");
 const stageDir = path.join(releaseDir, "dmg-stage");
 const identity = process.env.APPLE_SIGNING_IDENTITY || "-";
 
@@ -36,7 +36,7 @@ execFileSync(
 
 await rm(stageDir, { recursive: true, force: true });
 await mkdir(stageDir, { recursive: true });
-await cp(appPath, path.join(stageDir, "ToGpx.app"), {
+await cp(appPath, path.join(stageDir, "toGp.app"), {
   recursive: true,
   preserveTimestamps: true,
 });
@@ -48,7 +48,7 @@ execFileSync(
   [
     "create",
     "-volname",
-    "ToGpx",
+    "toGp",
     "-srcfolder",
     stageDir,
     "-ov",

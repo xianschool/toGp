@@ -1,6 +1,6 @@
 # Third-party notices
 
-ToGpx includes and uses the following third-party software.
+toGp includes and uses the following third-party software.
 
 ## Audiveris 5.11.0
 

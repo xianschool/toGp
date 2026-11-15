@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "ToGpx",
+  "productName": "toGp",
   "version": "0.1.0",
-  "identifier": "com.togpx.desktop",
+  "identifier": "com.togp.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "ToGpx",
+        "title": "toGp",
         "width": 1180,
         "height": 820,
         "minWidth": 900,

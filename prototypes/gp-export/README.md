@@ -1,6 +1,6 @@
 # GP export prototype
 
-This prototype validates the first format gate for the ToGpx service:
+This prototype validates the first format gate for the toGp service:
 
 ```text
 alphaTex/Score -> alphaTab Score -> .gp -> alphaTab readback

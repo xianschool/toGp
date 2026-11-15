@@ -1,6 +1,6 @@
-# ToGpx
+# toGp
 
-ToGpx is a local macOS utility that turns printed guitar scores into editable Guitar Pro 7/8 `.gp` files.
+toGp is a local macOS utility that turns printed guitar scores into editable Guitar Pro 7/8 `.gp` files.
 
 ```text
 PDF / image -> local Audiveris OMR -> MusicXML -> alphaTab -> .gp
@@ -62,8 +62,8 @@ The prepared Audiveris application is a build resource and is intentionally igno
 
 ## Licensing
 
-ToGpx is licensed under AGPL-3.0-only because it bundles Audiveris. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+toGp is licensed under AGPL-3.0-only because it bundles Audiveris. See [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 When publishing a binary release, publish the matching source repository and release tag alongside the DMG. The source for the exact upstream Audiveris version remains available from `https://github.com/Audiveris/audiveris/tree/5.11.0`.
 
-Guitar Pro is a trademark of its respective owner. ToGpx is not affiliated with or endorsed by Guitar Pro or Arobas Music.
+Guitar Pro is a trademark of its respective owner. toGp is not affiliated with or endorsed by Guitar Pro or Arobas Music.

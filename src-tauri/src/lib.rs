@@ -36,7 +36,7 @@ async fn recognize_file(
         .unwrap_or("未命名曲谱")
         .to_owned();
 
-    let work_dir = std::env::temp_dir().join(format!("togpx-{}", Uuid::new_v4()));
+    let work_dir = std::env::temp_dir().join(format!("togp-{}", Uuid::new_v4()));
     tokio::fs::create_dir_all(&work_dir)
         .await
         .map_err(|error| format!("无法创建临时目录：{error}"))?;
@@ -153,7 +153,7 @@ async fn export_gp(destination: String, bytes_base64: String) -> Result<(), Stri
         return Err("导出文件为空".to_owned());
     }
 
-    let temporary = parent.join(format!(".togpx-{}.tmp", Uuid::new_v4()));
+    let temporary = parent.join(format!(".togp-{}.tmp", Uuid::new_v4()));
     tokio::fs::write(&temporary, bytes)
         .await
         .map_err(|error| format!("无法写入导出文件：{error}"))?;
@@ -243,7 +243,7 @@ fn validate_input(input: &Path) -> Result<String, String> {
 fn find_audiveris(app: &AppHandle) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
 
-    if let Ok(value) = std::env::var("TOGPX_AUDIVERIS_EXECUTABLE") {
+    if let Ok(value) = std::env::var("TOGP_AUDIVERIS_EXECUTABLE") {
         candidates.push(PathBuf::from(value));
     }
 
@@ -273,7 +273,7 @@ fn find_audiveris(app: &AppHandle) -> Result<PathBuf, String> {
         .into_iter()
         .find(|path| path.is_file())
         .ok_or_else(|| {
-            "未找到 Audiveris 识别组件。请重新安装 ToGpx，或运行 npm run prepare:audiveris"
+            "未找到 Audiveris 识别组件。请重新安装 toGp，或运行 npm run prepare:audiveris"
                 .to_owned()
         })
 }
@@ -360,5 +360,5 @@ pub fn run() {
             open_license
         ])
         .run(tauri::generate_context!())
-        .expect("error while running ToGpx");
+        .expect("error while running toGp");
 }
