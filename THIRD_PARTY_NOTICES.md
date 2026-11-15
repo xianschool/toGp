@@ -9,13 +9,6 @@ toGp includes and uses the following third-party software.
 - License: MIT
 - Use: tablature extraction, rhythm reconstruction, and Guitar Pro 5 serialization
 
-## Audiveris (optional legacy component)
-
-- Project: https://github.com/Audiveris/audiveris
-- Version: 5.11.0
-- License: GNU Affero General Public License v3.0
-- Use: optional legacy MusicXML recognition workflow; the current tablature converter does not require it.
-
 ## Python and OCR runtime
 
 The macOS package includes a standalone Python runtime and pinned versions of `pdfplumber`, `PyGuitarPro`, `RapidOCR`, `ONNX Runtime`, OpenCV, NumPy, Pillow, Shapely, and their transitive dependencies. Their license files are installed alongside the Python packages.
