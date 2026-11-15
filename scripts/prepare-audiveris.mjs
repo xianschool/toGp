@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import {
   chmod,
   copyFile,
@@ -17,7 +18,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "5.11.0";
-const PREPARED_REVISION = `${VERSION}-r3`;
+const PREPARED_REVISION = `${VERSION}-r4`;
 const FILE_NAME = `Audiveris-${VERSION}-macosx-arm64.dmg`;
 const EXPECTED_SHA256 =
   "17491af8b6d40153b031dd1f0815e37213f0999ef23f10586af46706e59b2eb6";
@@ -126,26 +127,25 @@ try {
   await makeTreeReadable(destinationApp);
 
   const identity = findDeveloperIdIdentity();
-  const signingArguments = [
-    "--force",
-    "--deep",
-    "--sign",
-    identity ?? "-",
-    "--preserve-metadata=identifier",
-  ];
   if (identity) {
-    signingArguments.push(
-      "--options",
-      "runtime",
-      "--timestamp",
-      "--entitlements",
-      entitlementsPath,
+    await signBundleWithDeveloperId(destinationApp, identity, entitlementsPath);
+  } else {
+    execFileSync(
+      "codesign",
+      [
+        "--force",
+        "--deep",
+        "--sign",
+        "-",
+        "--preserve-metadata=identifier,entitlements",
+        destinationApp,
+      ],
+      { stdio: "inherit" },
     );
+    execFileSync("codesign", ["--verify", "--deep", "--strict", destinationApp], {
+      stdio: "inherit",
+    });
   }
-  execFileSync("codesign", [...signingArguments, destinationApp], { stdio: "inherit" });
-  execFileSync("codesign", ["--verify", "--deep", "--strict", destinationApp], {
-    stdio: "inherit",
-  });
   await rm(archivePath, { force: true });
   execFileSync(
     "ditto",
@@ -237,4 +237,138 @@ function findDeveloperIdIdentity() {
   );
   const teamId = process.env.APPLE_TEAM_ID;
   return identities.find((identity) => !teamId || identity.endsWith(`(${teamId})`));
+}
+
+async function signBundleWithDeveloperId(appPath, identity, entitlements) {
+  for (const archive of await findFiles(appPath, (file) => file.endsWith(".jar"))) {
+    await signNativeFilesInsideArchive(archive, identity);
+  }
+
+  const binaries = [];
+  for (const file of await findFiles(appPath, (candidate) => isNativeCandidate(candidate))) {
+    if (isMachO(file)) {
+      binaries.push(file);
+    }
+  }
+  binaries.sort(
+    (left, right) =>
+      right.split(path.sep).length - left.split(path.sep).length ||
+      left.localeCompare(right),
+  );
+
+  for (const binary of binaries) {
+    signDeveloperIdBinary(binary, identity, binaryNeedsEntitlements(appPath, binary) ? entitlements : null);
+  }
+
+  signDeveloperIdBinary(appPath, identity, entitlements, true);
+  execFileSync("codesign", ["--verify", "--deep", "--strict", appPath], {
+    stdio: "inherit",
+  });
+}
+
+async function signNativeFilesInsideArchive(archive, identity) {
+  const entries = execFileSync("unzip", ["-Z1", archive], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+    .split("\n")
+    .filter(Boolean)
+    .filter(isNativeArchiveEntry);
+  if (entries.length === 0) {
+    return;
+  }
+
+  const temporaryRoot = await mkdtemp(path.join(tmpdir(), "togp-jar-sign-"));
+  try {
+    for (const entry of entries) {
+      const relative = path.posix.normalize(entry);
+      if (relative.startsWith("../") || path.posix.isAbsolute(relative)) {
+        throw new Error(`Unsafe archive entry: ${entry}`);
+      }
+    }
+    execFileSync("unzip", ["-q", "-o", archive, "-d", temporaryRoot], {
+      stdio: "inherit",
+    });
+
+    for (const entry of entries) {
+      const relative = path.posix.normalize(entry);
+      const extracted = path.join(temporaryRoot, ...relative.split("/"));
+      if (!isMachO(extracted)) {
+        continue;
+      }
+
+      signDeveloperIdBinary(extracted, identity, null);
+      execFileSync("zip", ["-q", "-X", archive, relative], {
+        cwd: temporaryRoot,
+        stdio: "inherit",
+      });
+    }
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
+function signDeveloperIdBinary(target, identity, entitlements, bundle = false) {
+  const arguments_ = [
+    "--force",
+    "--options",
+    "runtime",
+    "--timestamp",
+    "--sign",
+    identity,
+  ];
+  if (entitlements) {
+    arguments_.push("--entitlements", entitlements);
+  }
+  arguments_.push(target);
+  execFileSync("codesign", arguments_, { stdio: "inherit" });
+  execFileSync(
+    "codesign",
+    ["--verify", ...(bundle ? ["--deep", "--strict"] : ["--strict"]), target],
+    { stdio: "inherit" },
+  );
+}
+
+function binaryNeedsEntitlements(appPath, binary) {
+  const relative = path.relative(appPath, binary);
+  return [
+    "Contents/MacOS/Audiveris",
+    "Contents/runtime/Contents/Home/bin/java",
+  ].includes(relative);
+}
+
+function isNativeCandidate(file) {
+  const extension = path.extname(file).toLowerCase();
+  return (
+    [".dylib", ".jnilib", ".so"].includes(extension) ||
+    (statSync(file).mode & 0o111) !== 0
+  );
+}
+
+function isNativeArchiveEntry(entry) {
+  const extension = path.posix.extname(entry).toLowerCase();
+  return (
+    [".dylib", ".jnilib", ".so"].includes(extension) ||
+    (extension === "" && !entry.endsWith("/"))
+  );
+}
+
+function isMachO(file) {
+  const description = execFileSync("file", ["-b", file], {
+    encoding: "utf8",
+  });
+  return description.includes("Mach-O");
+}
+
+async function findFiles(directory, predicate) {
+  const matches = [];
+  for (const entry of await readdir(directory, { withFileTypes: true })) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      matches.push(...(await findFiles(fullPath, predicate)));
+    } else if (entry.isFile() && predicate(fullPath)) {
+      matches.push(fullPath);
+    }
+  }
+  return matches;
 }
