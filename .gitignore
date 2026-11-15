@@ -2,5 +2,11 @@ node_modules/
 dist/
 coverage/
 prototypes/gp-export/artifacts/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/resources/
+.cache/
+public/font/
+public/soundfont/
 *.log
 .DS_Store

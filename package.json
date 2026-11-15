@@ -1,0 +1,28 @@
+{
+  "name": "togpx",
+  "version": "0.1.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "check": "tsc --noEmit",
+    "tauri": "tauri",
+    "prepare:audiveris": "node scripts/prepare-audiveris.mjs",
+    "verify:mxl": "node scripts/verify-mxl-to-gp.mjs",
+    "desktop:dev": "npm run prepare:audiveris && tauri dev",
+    "desktop:build": "npm run prepare:audiveris && node scripts/package-macos.mjs"
+  },
+  "dependencies": {
+    "@coderline/alphatab": "1.9.0",
+    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/plugin-dialog": "^2.4.0"
+  },
+  "devDependencies": {
+    "@coderline/alphatab-vite": "^1.9.0",
+    "@tauri-apps/cli": "^2.9.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.2"
+  }
+}
