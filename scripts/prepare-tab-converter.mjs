@@ -66,6 +66,10 @@ await copyFile(
   path.join(root, "scripts/tab-converter-runner.py"),
   path.join(resourceRoot, "runner.py"),
 );
+await copyFile(
+  path.join(root, "scripts/score_source_model.py"),
+  path.join(resourceRoot, "score_source_model.py"),
+);
 
 if (
   (await readFile(markerPath, "utf8").catch(() => "")) === `${PREPARED_REVISION}\n` &&
@@ -146,6 +150,15 @@ for (const [name, url] of [
     new Uint8Array(await response.arrayBuffer()),
   );
 }
+
+await copyFile(
+  path.join(root, "scripts/tab-converter-runner.py"),
+  path.join(resourceRoot, "runner.py"),
+);
+await copyFile(
+  path.join(root, "scripts/score_source_model.py"),
+  path.join(resourceRoot, "score_source_model.py"),
+);
 
 const python = path.join(resourceRoot, "python/bin", `python${pythonVersion}`);
 execFileSync(python, [path.join(resourceRoot, "runner.py"), "--check"], {

@@ -15,6 +15,21 @@ interface RecognitionResult {
     capo?: number;
     measures?: number;
     sourceProfile?: string;
+    sourceAdapter?: {
+      id?: string;
+      displayName?: string;
+      reason?: string;
+      sourceFamily?: string;
+      sourceConfidence?: number;
+      renderType?: string;
+    };
+    sourceDiagnosis?: {
+      renderType?: string;
+      sourceCandidates?: Array<{
+        family?: string;
+        confidence?: number;
+      }>;
+    };
     tabScore?: {
       source?: {
         renderType?: string;
@@ -277,7 +292,8 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
       : "",
     report.tempo ? `${report.tempo} BPM` : "",
     report.capo ? `Capo ${report.capo}` : "",
-    profileLabel(report.sourceProfile),
+    adapterLabel(report),
+    sourceFamilyLabel(report),
   ].filter(Boolean);
 
   resultStats.replaceChildren(
@@ -310,6 +326,33 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
   resultWarnings.hidden = warnings.length === 0;
   resultWarnings.open = false;
   resultSummary.hidden = false;
+}
+
+function adapterLabel(report: RecognitionResult["report"]): string {
+  return report.sourceAdapter?.displayName || profileLabel(report.sourceProfile);
+}
+
+function sourceFamilyLabel(report: RecognitionResult["report"]): string {
+  const adapter = report.sourceAdapter;
+  const candidate = report.sourceDiagnosis?.sourceCandidates?.find(
+    (item) => (item.confidence ?? 0) >= 0.7,
+  );
+  const family = adapter?.sourceFamily || candidate?.family;
+  const confidence = adapter?.sourceConfidence ?? candidate?.confidence ?? 0;
+  if (!family || confidence < 0.7) {
+    return "";
+  }
+  const labels: Record<string, string> = {
+    musescore: "MuseScore 来源",
+    "guitar-pro": "Guitar Pro 来源",
+    dorico: "Dorico 来源",
+    sibelius: "Sibelius 来源",
+    finale: "Finale 来源",
+    lilypond: "LilyPond 来源",
+    "digital-tab-screenshot": "数字六线谱截图",
+    "scanned-publication": "扫描出版物",
+  };
+  return labels[family] ?? "";
 }
 
 function profileLabel(profile: string | undefined): string {

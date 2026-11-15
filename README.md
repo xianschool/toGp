@@ -16,7 +16,7 @@ Multiple images can be selected in one operation. toGp sorts their file names na
 
 Tablature recognition works best with clear printed scores. Handwritten notation is not supported, and OCR results should be reviewed.
 
-Each recognition run also produces a normalized TabScore report containing pages, systems, tracks, measures, string/fret events, recognized text and structural checks. Inconsistent system measure coverage, string counts, event ranges or track alignment is shown with the review warnings; the GP5 export still uses the original conversion result.
+Each recognition run also diagnoses the render type and likely source family, selects a registered layout adapter, and produces a normalized TabScore report containing pages, systems, tracks, measures, string/fret events, recognized text and structural checks. Inconsistent system measure coverage, string counts, event ranges or track alignment is shown with the review warnings; the GP5 export still uses the original conversion result.
 
 ## macOS distribution
 

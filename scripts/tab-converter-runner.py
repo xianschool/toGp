@@ -13,9 +13,21 @@ from bisect import bisect_left, bisect_right
 from collections import Counter
 from pathlib import Path
 
+from score_source_model import aggregate_source_diagnosis, inspect_score_source
+
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 ACTIVE_TAB_PROFILE = "generic"
 TAB_SCORE_SCHEMA_VERSION = 1
+TAB_ADAPTERS = {
+    "generic": {
+        "displayName": "通用六线谱适配",
+        "description": "使用通用矢量/图像回退规则。",
+    },
+    "monochrome-watermark-tab": {
+        "displayName": "黑白水印六线谱",
+        "description": "补充浅色系统弦线，并修正水印打印版的三小节系统。",
+    },
+}
 CHORD_NAME = re.compile(
     r"^[A-G][#b]?(?:m|maj|min|sus|add|dim|aug|\u00b0)?\d*(?:[-+]\d+)?"
     r"(?:/[A-G][#b]?\d*(?:[-+]\d+)?)?$",
@@ -585,34 +597,62 @@ def extract_image_metadata(path: Path) -> dict:
 
 
 def detect_image_profile(path: Path) -> str:
-    from PIL import Image
-    import numpy as np
+    result = inspect_score_source(path, include_digest=False)
+    return str(result.get("visualProfile") or "generic")
 
-    with Image.open(path) as opened:
-        image = opened.convert("RGB")
-        image.thumbnail((1200, 1200), Image.Resampling.BILINEAR)
-        pixels = np.asarray(image)
-    red, green, blue = (
-        pixels[:, :, 0].astype(np.float32),
-        pixels[:, :, 1].astype(np.float32),
-        pixels[:, :, 2].astype(np.float32),
+
+def diagnose_source_inputs(inputs: list[Path]) -> dict:
+    results = []
+    for path in inputs:
+        try:
+            results.append(inspect_score_source(path, include_digest=False))
+        except Exception as error:
+            results.append(
+                {
+                    "name": path.name,
+                    "path": str(path),
+                    "error": str(error),
+                }
+            )
+    return aggregate_source_diagnosis(results)
+
+
+def select_tab_adapter(source_diagnosis: dict) -> dict:
+    files = source_diagnosis.get("files", [])
+    images = [
+        item
+        for item in files
+        if item.get("kind") == "image" and not item.get("error")
+    ]
+    features = source_diagnosis.get("features", {})
+    has_pdfs = bool(features.get("pdfFiles", 0)) or any(
+        item.get("kind") == "pdf" for item in files
     )
-    luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
-    red_ratio = (
-        (red > 70) & (red > green * 1.1) & (red > blue * 1.1) & (green < 235)
-    ).mean()
-    dark_ratio = (luminance < 80).mean()
-    gray_ratio = ((luminance >= 80) & (luminance < 235)).mean()
-    background_ratio = (luminance >= 235).mean()
+    all_inputs_are_images = features.get("imageFiles", len(images)) == len(files)
+    selected = "generic"
+    reason = "当前输入没有匹配到专用版面适配器，使用通用回退。"
     if (
-        red_ratio < 0.001
-        and dark_ratio < 0.04
-        and gray_ratio > 0.06
-        and background_ratio > 0.75
+        images
+        and all_inputs_are_images
+        and not has_pdfs
+        and all(
+            item.get("visualProfile") == "monochrome-watermark-tab"
+            for item in images
+        )
     ):
-        return "monochrome-watermark-tab"
-    return "generic"
-
+        selected = "monochrome-watermark-tab"
+        reason = "所有页面均具有浅色单色谱线和数字渲染背景，启用黑白水印适配。"
+    candidates = source_diagnosis.get("sourceCandidates", [])
+    top_candidate = candidates[0] if candidates else None
+    return {
+        "id": selected,
+        "displayName": TAB_ADAPTERS[selected]["displayName"],
+        "description": TAB_ADAPTERS[selected]["description"],
+        "reason": reason,
+        "sourceFamily": top_candidate.get("family") if top_candidate else None,
+        "sourceConfidence": top_candidate.get("confidence") if top_candidate else None,
+        "renderType": source_diagnosis.get("renderType"),
+    }
 
 def enum_value(value):
     return getattr(value, "value", value)
@@ -926,6 +966,10 @@ def build_tab_score(
             "inputKinds": sorted(extension.lstrip(".") for extension in input_extensions),
             "layouts": sorted(source_kinds),
             "files": [path.name for path in inputs],
+            "sourceCandidates": report.get("source_diagnosis", {}).get(
+                "sourceCandidates", []
+            ),
+            "adapter": report.get("source_adapter"),
         },
         "pages": pages,
         "systems": all_systems,
@@ -960,6 +1004,8 @@ def normalize_report_aliases(report: dict) -> None:
         ("tempo_changes", "tempoChanges"),
         ("repeats_expanded", "repeatsExpanded"),
         ("timed_lyrics", "timedLyrics"),
+        ("source_diagnosis", "sourceDiagnosis"),
+        ("source_adapter", "sourceAdapter"),
     ):
         if snake_case in report and camel_case not in report:
             report[camel_case] = report[snake_case]
@@ -1135,16 +1181,9 @@ def run(job_path: Path, output_path: Path) -> None:
     inputs = [Path(value) for value in job["inputs"]]
     images = [path for path in inputs if path.suffix.lower() in IMAGE_EXTENSIONS]
     pdfs = [path for path in inputs if path.suffix.lower() == ".pdf"]
-    ACTIVE_TAB_PROFILE = (
-        "monochrome-watermark-tab"
-        if images
-        and not pdfs
-        and all(
-            detect_image_profile(path) == "monochrome-watermark-tab"
-            for path in images
-        )
-        else "generic"
-    )
+    source_diagnosis = diagnose_source_inputs(inputs)
+    source_adapter = select_tab_adapter(source_diagnosis)
+    ACTIVE_TAB_PROFILE = source_adapter["id"]
     if ACTIVE_TAB_PROFILE == "monochrome-watermark-tab":
         import pdf_to_gp5.extract.raster_tab as raster
 
@@ -1218,6 +1257,8 @@ def run(job_path: Path, output_path: Path) -> None:
         result.report["chords"] = chords
     result.report["capo"] = detected_metadata.get("capo", 0)
     result.report["source_profile"] = ACTIVE_TAB_PROFILE
+    result.report["source_diagnosis"] = source_diagnosis
+    result.report["source_adapter"] = source_adapter
     try:
         result.report["tabScore"] = build_tab_score(
             result.gp5,

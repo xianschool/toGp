@@ -115,6 +115,50 @@ class TabScoreModelTest(unittest.TestCase):
         self.assertEqual(report["sourceProfile"], "generic")
         self.assertEqual(report["timeSignature"], "3/4")
 
+    def test_monochrome_pages_select_watermark_adapter(self) -> None:
+        adapter = RUNNER.select_tab_adapter(
+            {
+                "renderType": "digital-raster",
+                "sourceCandidates": [
+                    {
+                        "family": "generic-raster-score",
+                        "confidence": 0.4,
+                    }
+                ],
+                "files": [
+                    {
+                        "kind": "image",
+                        "visualProfile": "monochrome-watermark-tab",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(adapter["id"], "monochrome-watermark-tab")
+        self.assertEqual(adapter["displayName"], "黑白水印六线谱")
+
+    def test_red_chord_pages_use_generic_fallback(self) -> None:
+        adapter = RUNNER.select_tab_adapter(
+            {
+                "renderType": "digital-raster-tab",
+                "sourceCandidates": [
+                    {
+                        "family": "digital-tab-screenshot",
+                        "confidence": 0.75,
+                    }
+                ],
+                "files": [
+                    {
+                        "kind": "image",
+                        "visualProfile": "red-chord-tab",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(adapter["id"], "generic")
+        self.assertEqual(adapter["sourceFamily"], "digital-tab-screenshot")
+
 
 if __name__ == "__main__":
     unittest.main()
