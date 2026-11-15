@@ -134,6 +134,11 @@ main {
   font-size: 13px;
 }
 
+.button-cancel {
+  min-height: 32px;
+  margin-left: 4px;
+}
+
 .spinner {
   width: 18px;
   height: 18px;

@@ -30,7 +30,10 @@
 
         <section id="progress-panel" class="progress" aria-live="polite" hidden>
           <span class="spinner" aria-hidden="true"></span>
-          <span>识别中…</span>
+          <span id="progress-label">识别中…</span>
+          <button id="cancel-recognition" class="button button-muted button-cancel" type="button">
+            取消
+          </button>
         </section>
 
         <section id="error-panel" class="error" role="alert" hidden>

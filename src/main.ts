@@ -29,6 +29,8 @@ const exportButton = requiredButton("export-gp");
 const resultActions = requiredElement("result-actions");
 const start = requiredElement("start");
 const progressPanel = requiredElement("progress-panel");
+const progressLabel = requiredElement("progress-label");
+const cancelRecognitionButton = requiredButton("cancel-recognition");
 const errorPanel = requiredElement("error-panel");
 const errorMessage = requiredElement("error-message");
 const workspace = requiredElement("workspace");
@@ -43,6 +45,7 @@ const aboutCloseButton = requiredButton("about-close");
 
 let currentResult: RecognitionResult | null = null;
 let busy = false;
+let cancelling = false;
 const appWindow = getCurrentWindow();
 
 const baseUrl = import.meta.env.BASE_URL;
@@ -86,6 +89,7 @@ api.error.on((error) => {
 
 chooseFileButton.addEventListener("click", () => void chooseAndRecognize());
 chooseAnotherButton.addEventListener("click", () => void chooseAndRecognize());
+cancelRecognitionButton.addEventListener("click", () => void cancelRecognition());
 exportButton.addEventListener("click", () => void exportGp());
 aboutCloseButton.addEventListener("click", () => aboutDialog.close());
 aboutDialog.addEventListener("click", (event) => {
@@ -143,9 +147,12 @@ async function recognizePaths(inputPaths: string[]): Promise<void> {
     return;
   }
   busy = true;
+  cancelling = false;
   chooseFileButton.disabled = true;
   chooseAnotherButton.disabled = true;
   exportButton.disabled = true;
+  cancelRecognitionButton.disabled = false;
+  progressLabel.textContent = "识别中…";
   start.hidden = true;
   errorPanel.hidden = true;
   workspace.hidden = true;
@@ -163,14 +170,42 @@ async function recognizePaths(inputPaths: string[]): Promise<void> {
     api.load(base64ToBytes(result.gp5Base64), [0]);
     progressPanel.hidden = true;
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
     progressPanel.hidden = true;
     resultSummary.hidden = true;
     start.hidden = false;
-    showError(error instanceof Error ? error.message : String(error));
+    if (!message.includes("识别已取消")) {
+      showError(message);
+    }
   } finally {
     busy = false;
+    cancelling = false;
+    cancelRecognitionButton.disabled = false;
+    progressLabel.textContent = "识别中…";
     chooseFileButton.disabled = false;
     chooseAnotherButton.disabled = false;
+  }
+}
+
+async function cancelRecognition(): Promise<void> {
+  if (!busy || cancelling) {
+    return;
+  }
+  cancelling = true;
+  cancelRecognitionButton.disabled = true;
+  progressLabel.textContent = "正在取消…";
+  try {
+    const requested = await invoke<boolean>("cancel_tab_recognition");
+    if (!requested && busy) {
+      cancelling = false;
+      cancelRecognitionButton.disabled = false;
+      progressLabel.textContent = "识别中…";
+    }
+  } catch (error) {
+    cancelling = false;
+    cancelRecognitionButton.disabled = false;
+    progressLabel.textContent = "识别中…";
+    showError(`无法取消识别：${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

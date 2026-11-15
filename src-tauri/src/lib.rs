@@ -5,14 +5,19 @@ use std::{
     ffi::OsString,
     fs,
     path::{Path, PathBuf},
-    process::Stdio,
-    time::Duration,
+    process::{ExitStatus, Stdio},
+    sync::{
+        atomic::{AtomicBool, Ordering as AtomicOrdering},
+        Arc, Mutex,
+    },
+    time::{Duration, Instant},
 };
 use tauri::{
     menu::{Menu, MenuItem, HELP_SUBMENU_ID},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, State,
 };
-use tokio::process::Command;
+use tokio::io::{AsyncRead, AsyncReadExt};
+use tokio::process::{Child, Command};
 use uuid::Uuid;
 
 const MAX_INPUT_BYTES: u64 = 100 * 1024 * 1024;
@@ -21,6 +26,46 @@ const MAX_FILES: usize = 30;
 const RECOGNITION_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const ABOUT_MENU_ID: &str = "about";
 const PDF_LOW_RES_ATTEMPTS: &[(u32, u32)] = &[(50, 60_000_000), (30, 25_000_000)];
+
+#[derive(Default)]
+struct RecognitionState {
+    active: Mutex<Option<Arc<AtomicBool>>>,
+}
+
+impl RecognitionState {
+    fn begin(&self) -> Result<Arc<AtomicBool>, String> {
+        let mut active = self
+            .active
+            .lock()
+            .map_err(|_| "无法启动识别任务".to_owned())?;
+        if active.is_some() {
+            return Err("已有识别任务正在进行".to_owned());
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        *active = Some(Arc::clone(&cancel));
+        Ok(cancel)
+    }
+
+    fn cancel(&self) -> bool {
+        let cancel = self
+            .active
+            .lock()
+            .ok()
+            .and_then(|active| active.as_ref().cloned());
+        if let Some(cancel) = cancel {
+            cancel.store(true, AtomicOrdering::SeqCst);
+            true
+        } else {
+            false
+        }
+    }
+
+    fn finish(&self) {
+        if let Ok(mut active) = self.active.lock() {
+            *active = None;
+        }
+    }
+}
 
 struct RecognitionEngineError {
     summary: String,
@@ -94,9 +139,48 @@ struct TabConverterReply {
     report: Option<serde_json::Value>,
 }
 
+async fn read_pipe<R>(mut pipe: R) -> Result<Vec<u8>, String>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut bytes = Vec::new();
+    pipe.read_to_end(&mut bytes)
+        .await
+        .map_err(|error| format!("无法读取转换器输出：{error}"))?;
+    Ok(bytes)
+}
+
+enum ChildOutcome {
+    Exited(ExitStatus),
+    Cancelled,
+    TimedOut,
+}
+
+async fn wait_for_child(child: &mut Child, cancel: &AtomicBool) -> Result<ChildOutcome, String> {
+    let started = Instant::now();
+    loop {
+        if let Some(status) = child
+            .try_wait()
+            .map_err(|error| format!("六线谱转换器失败：{error}"))?
+        {
+            return Ok(ChildOutcome::Exited(status));
+        }
+        if cancel.load(AtomicOrdering::SeqCst) {
+            let _ = child.kill().await;
+            return Ok(ChildOutcome::Cancelled);
+        }
+        if started.elapsed() >= RECOGNITION_TIMEOUT {
+            let _ = child.kill().await;
+            return Ok(ChildOutcome::TimedOut);
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
 #[tauri::command]
 async fn recognize_tab_files(
     app: AppHandle,
+    state: State<'_, RecognitionState>,
     input_paths: Vec<String>,
 ) -> Result<TabRecognitionResult, String> {
     if input_paths.is_empty() {
@@ -134,11 +218,20 @@ async fn recognize_tab_files(
         format!("{first_name} 等 {} 个文件", inputs.len())
     };
 
-    let (python, runner, site_packages) = find_tab_converter(&app)?;
+    let cancel = state.begin()?;
+    let result = run_tab_recognition(&app, inputs, display_name, cancel).await;
+    state.finish();
+    result
+}
+
+async fn run_tab_recognition(
+    app: &AppHandle,
+    inputs: Vec<PathBuf>,
+    display_name: String,
+    cancel: Arc<AtomicBool>,
+) -> Result<TabRecognitionResult, String> {
+    let (python, runner, site_packages) = find_tab_converter(app)?;
     let work_dir = std::env::temp_dir().join(format!("togp-tab-{}", Uuid::new_v4()));
-    tokio::fs::create_dir_all(&work_dir)
-        .await
-        .map_err(|error| format!("无法创建临时目录：{error}"))?;
     let output_path = work_dir.join("output.gp5");
     let job_path = work_dir.join("job.json");
     let job = serde_json::json!({
@@ -147,14 +240,18 @@ async fn recognize_tab_files(
             .map(|path| path.to_string_lossy().to_string())
             .collect::<Vec<_>>()
     });
-    tokio::fs::write(
-        &job_path,
-        serde_json::to_vec(&job).map_err(|error| format!("无法创建转换任务：{error}"))?,
-    )
-    .await
-    .map_err(|error| format!("无法创建转换任务：{error}"))?;
 
     let result = async {
+        tokio::fs::create_dir_all(&work_dir)
+            .await
+            .map_err(|error| format!("无法创建临时目录：{error}"))?;
+        tokio::fs::write(
+            &job_path,
+            serde_json::to_vec(&job).map_err(|error| format!("无法创建转换任务：{error}"))?,
+        )
+        .await
+        .map_err(|error| format!("无法创建转换任务：{error}"))?;
+
         let mut command = Command::new(python);
         command
             .arg(runner)
@@ -177,23 +274,50 @@ async fn recognize_tab_files(
             .env("PYTHONUNBUFFERED", "1")
             .env("ORT_DISABLE_TELEMETRY", "1");
 
-        let child = command
+        let mut child = command
             .spawn()
             .map_err(|error| format!("无法启动六线谱转换器：{error}"))?;
-        let output = tokio::time::timeout(RECOGNITION_TIMEOUT, child.wait_with_output())
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| "无法读取转换器输出".to_owned())?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| "无法读取转换器错误信息".to_owned())?;
+        let stdout_task = tokio::spawn(read_pipe(stdout));
+        let stderr_task = tokio::spawn(read_pipe(stderr));
+
+        let status = match wait_for_child(&mut child, &cancel).await? {
+            ChildOutcome::Exited(status) => status,
+            ChildOutcome::Cancelled => {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err("识别已取消".to_owned());
+            }
+            ChildOutcome::TimedOut => {
+                let _ = stdout_task.await;
+                let _ = stderr_task.await;
+                return Err("六线谱识别超时".to_owned());
+            }
+        };
+        let stdout = stdout_task
             .await
-            .map_err(|_| "六线谱识别超时".to_owned())?
-            .map_err(|error| format!("六线谱转换器失败：{error}"))?;
-        let reply = serde_json::from_slice::<TabConverterReply>(&output.stdout).ok();
-        if !output.status.success() || !reply.as_ref().is_some_and(|reply| reply.ok) {
+            .map_err(|error| format!("无法等待转换器输出：{error}"))??;
+        let stderr = stderr_task
+            .await
+            .map_err(|error| format!("无法等待转换器错误信息：{error}"))??;
+
+        let reply = serde_json::from_slice::<TabConverterReply>(&stdout).ok();
+        if !status.success() || !reply.as_ref().is_some_and(|reply| reply.ok) {
             let detail = reply
                 .and_then(|reply| reply.error)
                 .or_else(|| {
-                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let stderr = String::from_utf8_lossy(&stderr);
                     let detail = stderr.trim();
                     (!detail.is_empty()).then(|| truncate(detail, 1200))
                 })
-                .unwrap_or_else(|| format!("转换器退出，状态码 {:?}", output.status.code()));
+                .unwrap_or_else(|| format!("转换器退出，状态码 {:?}", status.code()));
             return Err(format!("六线谱识别失败：{detail}"));
         }
 
@@ -213,9 +337,13 @@ async fn recognize_tab_files(
         })
     }
     .await;
-
     let _ = tokio::fs::remove_dir_all(&work_dir).await;
     result
+}
+
+#[tauri::command]
+fn cancel_tab_recognition(state: State<'_, RecognitionState>) -> bool {
+    state.cancel()
 }
 
 #[tauri::command]
@@ -836,6 +964,7 @@ fn truncate(value: &str, max_chars: usize) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        .manage(RecognitionState::default())
         .setup(|app| {
             let handle = app.handle().clone();
             let menu = Menu::default(&handle)?;
@@ -858,6 +987,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             recognize_files,
             recognize_tab_files,
+            cancel_tab_recognition,
             export_gp,
             export_gp5
         ])
@@ -867,8 +997,17 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{appears_to_be_music_xml, natural_cmp, RecognitionEngineError};
-    use std::cmp::Ordering;
+    use super::{
+        appears_to_be_music_xml, natural_cmp, wait_for_child, ChildOutcome, RecognitionEngineError,
+        RecognitionState,
+    };
+    use std::{
+        cmp::Ordering,
+        process::Stdio,
+        sync::atomic::AtomicBool,
+        time::{Duration, Instant},
+    };
+    use tokio::process::Command;
 
     #[test]
     fn sorts_numeric_file_names_naturally() {
@@ -897,5 +1036,45 @@ mod tests {
 
         assert!(error.is_image_too_large());
         assert!(error.user_message().contains("PDF"));
+    }
+
+    #[test]
+    fn allows_only_one_active_recognition_and_can_cancel_it() {
+        let state = RecognitionState::default();
+        let _cancel = state.begin().expect("first task should start");
+
+        assert!(state.begin().is_err());
+        assert!(state.cancel());
+
+        state.finish();
+        assert!(state.begin().is_ok());
+        assert!(state.cancel());
+    }
+
+    #[test]
+    fn cancelling_a_recognition_kills_its_child_process() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        runtime.block_on(async {
+            let mut child = Command::new("/bin/sleep")
+                .arg("10")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true)
+                .spawn()
+                .expect("child process");
+            let cancel = AtomicBool::new(true);
+            let started = Instant::now();
+
+            let outcome = wait_for_child(&mut child, &cancel)
+                .await
+                .expect("wait result");
+
+            assert!(matches!(outcome, ChildOutcome::Cancelled));
+            assert!(started.elapsed() < Duration::from_secs(2));
+        });
     }
 }
