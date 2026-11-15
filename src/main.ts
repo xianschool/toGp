@@ -11,6 +11,14 @@ interface RecognitionResult {
   report: {
     title?: string;
     artist?: string;
+    tempo?: number;
+    capo?: number;
+    measures?: number;
+    sourceProfile?: string;
+    tracks?: Array<{
+      strings?: number;
+      notes?: number;
+    }>;
     warnings?: string[];
   };
 }
@@ -24,6 +32,11 @@ const progressPanel = requiredElement("progress-panel");
 const errorPanel = requiredElement("error-panel");
 const errorMessage = requiredElement("error-message");
 const workspace = requiredElement("workspace");
+const resultSummary = requiredElement("result-summary");
+const resultStats = requiredElement("result-stats");
+const resultWarnings = requiredElement<HTMLDetailsElement>("result-warnings");
+const resultWarningSummary = requiredElement("result-warning-summary");
+const resultWarningList = requiredElement("result-warning-list");
 const aboutDialog = requiredElement<HTMLDialogElement>("about-dialog");
 const aboutCloseButton = requiredButton("about-close");
 
@@ -56,6 +69,7 @@ api.scoreLoaded.on((score) => {
     metadataChanged = true;
   }
   document.body.classList.add("has-result");
+  renderRecognitionSummary(currentResult?.report);
   workspace.hidden = false;
   resultActions.hidden = false;
   exportButton.disabled = false;
@@ -110,6 +124,7 @@ async function chooseAndRecognize(): Promise<void> {
   start.hidden = true;
   errorPanel.hidden = true;
   workspace.hidden = true;
+  resultSummary.hidden = true;
   resultActions.hidden = true;
   document.body.classList.remove("has-result");
   progressPanel.hidden = false;
@@ -124,6 +139,7 @@ async function chooseAndRecognize(): Promise<void> {
     progressPanel.hidden = true;
   } catch (error) {
     progressPanel.hidden = true;
+    resultSummary.hidden = true;
     start.hidden = false;
     showError(error instanceof Error ? error.message : String(error));
   } finally {
@@ -167,6 +183,79 @@ async function exportGp(): Promise<void> {
 function showError(message: string): void {
   errorMessage.textContent = message.split("\n")[0] ?? message;
   errorPanel.hidden = false;
+}
+
+function renderRecognitionSummary(report: RecognitionResult["report"] | undefined): void {
+  if (!report) {
+    resultSummary.hidden = true;
+    return;
+  }
+
+  const track = report.tracks?.[0];
+  const stats = [
+    track?.strings ? `${track.strings} 弦` : "",
+    report.measures ? `${report.measures} 小节` : "",
+    report.tempo ? `${report.tempo} BPM` : "",
+    report.capo ? `Capo ${report.capo}` : "",
+    profileLabel(report.sourceProfile),
+  ].filter(Boolean);
+
+  resultStats.replaceChildren(
+    ...stats.map((text) => {
+      const item = document.createElement("span");
+      item.className = "result-chip";
+      item.textContent = text;
+      return item;
+    }),
+  );
+
+  const warnings = (report.warnings ?? []).filter((warning) => warning.trim());
+  resultWarningList.replaceChildren(
+    ...warnings.map((warning) => {
+      const item = document.createElement("li");
+      item.textContent = formatWarning(warning);
+      return item;
+    }),
+  );
+  resultWarningSummary.textContent = `识别提示 · ${warnings.length} 条`;
+  resultWarnings.hidden = warnings.length === 0;
+  resultWarnings.open = false;
+  resultSummary.hidden = false;
+}
+
+function profileLabel(profile: string | undefined): string {
+  if (profile === "monochrome-watermark-tab") {
+    return "黑白水印六线谱";
+  }
+  if (profile === "generic") {
+    return "通用识别";
+  }
+  return "";
+}
+
+function formatWarning(warning: string): string {
+  if (warning.startsWith("Tablature read from an image (OCR)")) {
+    return "这是从图片识别的六线谱，请核对音符、节奏和演奏技巧。";
+  }
+  const rhythm = warning.match(
+    /^Rhythm read from the score in (\d+) bar\(s\); estimated from the spacing of the notes in bars (.+): check them before trusting the playback\.$/,
+  );
+  if (rhythm) {
+    return `只有 ${rhythm[1]} 小节读取到明确节奏；第 ${rhythm[2]} 小节按音符间距估算时值，播放前请核对。`;
+  }
+  const missing = warning.match(
+    /^Bars not found in the PDF, filled with rests: (.+)\.$/,
+  );
+  if (missing) {
+    return `第 ${missing[1]} 小节没有从谱面中找到，已用休止符填充。`;
+  }
+  const strings = warning.match(
+    /^(\d+) tab line\(s\) with a number of strings other than (\d+) were ignored\.$/,
+  );
+  if (strings) {
+    return `忽略了 ${strings[1]} 条弦数与主谱表（${strings[2]} 弦）不一致的谱线。`;
+  }
+  return warning;
 }
 
 function requiredElement<T extends HTMLElement = HTMLElement>(id: string): T {
