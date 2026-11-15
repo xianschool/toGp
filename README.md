@@ -75,6 +75,17 @@ Build outputs are written under `src-tauri/target/aarch64-apple-darwin/release/b
 
 The local build is ad-hoc signed unless `APPLE_SIGNING_IDENTITY` is provided. Sharing a build outside your own Mac should use an Apple Developer ID certificate and notarization; otherwise macOS will show an unidentified-developer warning.
 
+## Regression audits
+
+Run a local conversion audit against a score without copying it into the repository:
+
+```bash
+npm run audit:score -- ~/Downloads/yesterday.pdf \
+  --expect docs/source-regression-examples/guitar-pro-yesterday.json --pretty
+```
+
+The command prints source diagnosis, adapter selection, TabScore totals, rhythm coverage, warnings and expectation checks. It exits non-zero when an expectation fails. The example JSON files store only expectations and SHA-256 fingerprints; the copyrighted PDFs stay outside Git.
+
 ## Tablature converter component
 
 `npm run prepare:tab-converter` prepares a pinned build of the MIT-licensed PDF-to-GP5 converter, an Apple Silicon Python runtime, and its offline OCR dependencies. The generated runtime is a build resource and is intentionally ignored by Git.
