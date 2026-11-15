@@ -12,15 +12,20 @@
         <h1>toGp</h1>
         <div id="result-actions" class="result-actions" hidden>
           <button id="choose-another" class="button button-muted" type="button">选择图片</button>
-          <button id="export-gp" class="button button-primary" type="button">导出 GP</button>
+          <button id="export-gp" class="button button-primary" type="button">导出 GP5</button>
         </div>
       </header>
 
       <main>
         <section id="start" class="start">
-          <button id="choose-file" class="button button-primary button-upload" type="button">
-            选择图片
-          </button>
+          <div class="start-copy">
+            <p class="intro-copy">
+              将清晰的六线谱图片或 PDF 转成可编辑的 Guitar Pro 5 文件。支持多张图片自动排序并合并，所有处理都在本机完成。
+            </p>
+            <button id="choose-file" class="button button-primary button-upload" type="button">
+              选择图片
+            </button>
+          </div>
         </section>
 
         <section id="progress-panel" class="progress" aria-live="polite" hidden>
@@ -36,6 +41,21 @@
           <div id="alphaTab"></div>
         </section>
       </main>
+
+      <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title">
+        <div class="about-card">
+          <button id="about-close" class="about-close" type="button" aria-label="关闭">×</button>
+          <p class="about-kicker">关于我们</p>
+          <h2 id="about-title">toGp</h2>
+          <p class="about-description">
+            一个在本地把扫描乐谱转换成 Guitar Pro 文件的小工具。
+          </p>
+          <div class="about-contact">
+            <span>联系邮箱</span>
+            <a id="contact-email" href="mailto:">待填写</a>
+          </div>
+        </div>
+      </dialog>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

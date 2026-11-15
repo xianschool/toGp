@@ -1,5 +1,5 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     cmp::Ordering,
     ffi::OsString,
@@ -8,7 +8,10 @@ use std::{
     process::Stdio,
     time::Duration,
 };
-use tauri::{AppHandle, Manager};
+use tauri::{
+    menu::{Menu, MenuItem, HELP_SUBMENU_ID},
+    AppHandle, Emitter, Manager,
+};
 use tokio::process::Command;
 use uuid::Uuid;
 
@@ -17,8 +20,7 @@ const MAX_TOTAL_BYTES: u64 = 300 * 1024 * 1024;
 const MAX_FILES: usize = 30;
 const RECOGNITION_TIMEOUT: Duration = Duration::from_secs(20 * 60);
 const ABOUT_MENU_ID: &str = "about";
-const PDF_LOW_RES_ATTEMPTS: &[(u32, u32)] =
-    &[(50, 60_000_000), (30, 25_000_000)];
+const PDF_LOW_RES_ATTEMPTS: &[(u32, u32)] = &[(50, 60_000_000), (30, 25_000_000)];
 
 struct RecognitionEngineError {
     summary: String,
@@ -75,6 +77,145 @@ struct RecognitionResult {
 struct MusicXmlFile {
     data_base64: String,
     extension: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct TabRecognitionResult {
+    display_name: String,
+    gp5_base64: String,
+    report: serde_json::Value,
+}
+
+#[derive(Deserialize)]
+struct TabConverterReply {
+    ok: bool,
+    error: Option<String>,
+    report: Option<serde_json::Value>,
+}
+
+#[tauri::command]
+async fn recognize_tab_files(
+    app: AppHandle,
+    input_paths: Vec<String>,
+) -> Result<TabRecognitionResult, String> {
+    if input_paths.is_empty() {
+        return Err("没有选择曲谱".to_owned());
+    }
+    if input_paths.len() > MAX_FILES {
+        return Err(format!("一次最多选择 {MAX_FILES} 个文件"));
+    }
+
+    let mut inputs = input_paths
+        .into_iter()
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    inputs.sort_by(|left, right| natural_path_cmp(left, right));
+
+    let mut total_bytes = 0_u64;
+    for input in &inputs {
+        validate_input(input)?;
+        total_bytes += fs::metadata(input)
+            .map_err(|error| format!("无法读取文件信息：{error}"))?
+            .len();
+    }
+    if total_bytes > MAX_TOTAL_BYTES {
+        return Err("所选文件合计超过 300 MB 限制".to_owned());
+    }
+
+    let first_name = inputs
+        .first()
+        .and_then(|path| path.file_stem())
+        .and_then(|name| name.to_str())
+        .unwrap_or("未命名曲谱");
+    let display_name = if inputs.len() == 1 {
+        first_name.to_owned()
+    } else {
+        format!("{first_name} 等 {} 个文件", inputs.len())
+    };
+
+    let (python, runner, site_packages) = find_tab_converter(&app)?;
+    let work_dir = std::env::temp_dir().join(format!("togp-tab-{}", Uuid::new_v4()));
+    tokio::fs::create_dir_all(&work_dir)
+        .await
+        .map_err(|error| format!("无法创建临时目录：{error}"))?;
+    let output_path = work_dir.join("output.gp5");
+    let job_path = work_dir.join("job.json");
+    let job = serde_json::json!({
+        "inputs": inputs
+            .iter()
+            .map(|path| path.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+    });
+    tokio::fs::write(
+        &job_path,
+        serde_json::to_vec(&job).map_err(|error| format!("无法创建转换任务：{error}"))?,
+    )
+    .await
+    .map_err(|error| format!("无法创建转换任务：{error}"))?;
+
+    let result = async {
+        let mut command = Command::new(python);
+        command
+            .arg(runner)
+            .arg(&job_path)
+            .arg(&output_path)
+            .current_dir(&work_dir)
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .env_clear()
+            .env("HOME", &work_dir)
+            .env("TMPDIR", &work_dir)
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+            .env("LANG", "C.UTF-8")
+            .env("LC_ALL", "C.UTF-8")
+            .env("PYTHONPATH", site_packages)
+            .env("PYTHONDONTWRITEBYTECODE", "1")
+            .env("PYTHONNOUSERSITE", "1")
+            .env("PYTHONUNBUFFERED", "1")
+            .env("ORT_DISABLE_TELEMETRY", "1");
+
+        let child = command
+            .spawn()
+            .map_err(|error| format!("无法启动六线谱转换器：{error}"))?;
+        let output = tokio::time::timeout(RECOGNITION_TIMEOUT, child.wait_with_output())
+            .await
+            .map_err(|_| "六线谱识别超时".to_owned())?
+            .map_err(|error| format!("六线谱转换器失败：{error}"))?;
+        let reply = serde_json::from_slice::<TabConverterReply>(&output.stdout).ok();
+        if !output.status.success() || !reply.as_ref().is_some_and(|reply| reply.ok) {
+            let detail = reply
+                .and_then(|reply| reply.error)
+                .or_else(|| {
+                    let stderr = String::from_utf8_lossy(&output.stderr);
+                    let detail = stderr.trim();
+                    (!detail.is_empty()).then(|| truncate(detail, 1200))
+                })
+                .unwrap_or_else(|| format!("转换器退出，状态码 {:?}", output.status.code()));
+            return Err(format!("六线谱识别失败：{detail}"));
+        }
+
+        let bytes = tokio::fs::read(&output_path)
+            .await
+            .map_err(|error| format!("无法读取 GP5 结果：{error}"))?;
+        if bytes.is_empty() {
+            return Err("转换器生成了空的 GP5 文件".to_owned());
+        }
+
+        Ok(TabRecognitionResult {
+            display_name,
+            gp5_base64: BASE64.encode(bytes),
+            report: reply
+                .and_then(|reply| reply.report)
+                .unwrap_or(serde_json::Value::Null),
+        })
+    }
+    .await;
+
+    let _ = tokio::fs::remove_dir_all(&work_dir).await;
+    result
 }
 
 #[tauri::command]
@@ -430,6 +571,43 @@ async fn export_gp(destination: String, bytes_base64: String) -> Result<(), Stri
     Ok(())
 }
 
+#[tauri::command]
+async fn export_gp5(destination: String, bytes_base64: String) -> Result<(), String> {
+    let destination = PathBuf::from(destination);
+    if !destination
+        .extension()
+        .and_then(|value| value.to_str())
+        .is_some_and(|value| value.eq_ignore_ascii_case("gp5"))
+    {
+        return Err("导出文件必须使用 .gp5 扩展名".to_owned());
+    }
+
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "无法确定导出目录".to_owned())?;
+    if !parent.is_dir() {
+        return Err("导出目录不存在".to_owned());
+    }
+    let bytes = BASE64
+        .decode(bytes_base64)
+        .map_err(|error| format!("导出数据无效：{error}"))?;
+    if bytes.is_empty() {
+        return Err("导出文件为空".to_owned());
+    }
+
+    let temporary = parent.join(format!(".togp-{}.tmp", Uuid::new_v4()));
+    tokio::fs::write(&temporary, bytes)
+        .await
+        .map_err(|error| format!("无法写入导出文件：{error}"))?;
+    tokio::fs::rename(&temporary, &destination)
+        .await
+        .map_err(|error| {
+            let _ = std::fs::remove_file(&temporary);
+            format!("无法保存导出文件：{error}")
+        })?;
+    Ok(())
+}
+
 fn validate_input(input: &Path) -> Result<String, String> {
     if !input.is_file() {
         return Err("所选文件不存在".to_owned());
@@ -547,6 +725,33 @@ fn find_audiveris(app: &AppHandle) -> Result<PathBuf, String> {
         .ok_or_else(|| "未找到 Audiveris 识别组件，请重新安装 toGp".to_owned())
 }
 
+fn find_tab_converter(app: &AppHandle) -> Result<(PathBuf, PathBuf, PathBuf), String> {
+    let mut roots = Vec::new();
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        roots.push(resource_dir.join("resources/tab-converter"));
+        roots.push(resource_dir.join("tab-converter"));
+    }
+    roots.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tab-converter"));
+
+    for root in roots {
+        let runner = root.join("runner.py");
+        let site_packages = root.join("python/lib/python3.12/site-packages");
+        let python = [
+            root.join("python/bin/python3.12"),
+            root.join("python/bin/python3"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file());
+        if runner.is_file() && site_packages.is_dir() {
+            if let Some(python) = python {
+                return Ok((python, runner, site_packages));
+            }
+        }
+    }
+
+    Err("未找到六线谱转换组件，请重新安装 toGp".to_owned())
+}
+
 fn find_tessdata(app: &AppHandle) -> Option<PathBuf> {
     let mut candidates = Vec::new();
     if let Ok(resource_dir) = app.path().resource_dir() {
@@ -631,7 +836,31 @@ fn truncate(value: &str, max_chars: usize) -> String {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![recognize_files, export_gp])
+        .setup(|app| {
+            let handle = app.handle().clone();
+            let menu = Menu::default(&handle)?;
+            if let Some(help_item) = menu.get(HELP_SUBMENU_ID) {
+                if let Some(help) = help_item.as_submenu() {
+                    help.set_text("帮助")?;
+                    let about =
+                        MenuItem::with_id(&handle, ABOUT_MENU_ID, "关于我们", true, None::<&str>)?;
+                    help.append(&about)?;
+                }
+            }
+            handle.set_menu(menu)?;
+            handle.on_menu_event(|app, event| {
+                if event.id().as_ref() == ABOUT_MENU_ID {
+                    let _ = app.emit("open-about", ());
+                }
+            });
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            recognize_files,
+            recognize_tab_files,
+            export_gp,
+            export_gp5
+        ])
         .run(tauri::generate_context!())
         .expect("error while running toGp");
 }

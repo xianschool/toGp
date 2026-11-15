@@ -29,9 +29,8 @@
     "active": true,
     "targets": ["app", "dmg"],
     "resources": [
-      "resources/audiveris-runtime.zip",
       "resources/legal",
-      "resources/tessdata"
+      "resources/tab-converter"
     ],
     "icon": [
       "icons/32x32.png",

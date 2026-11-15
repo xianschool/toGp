@@ -1,17 +1,14 @@
 import * as alphaTab from "@coderline/alphatab";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
-import { mergeScores } from "./score-merge";
 import "./style.css";
-
-interface MusicXmlFile {
-  dataBase64: string;
-  extension: string;
-}
 
 interface RecognitionResult {
   displayName: string;
-  musicXmlFiles: MusicXmlFile[];
+  gp5Base64: string;
+  report: unknown;
 }
 
 const chooseFileButton = requiredButton("choose-file");
@@ -23,6 +20,8 @@ const progressPanel = requiredElement("progress-panel");
 const errorPanel = requiredElement("error-panel");
 const errorMessage = requiredElement("error-message");
 const workspace = requiredElement("workspace");
+const aboutDialog = requiredElement<HTMLDialogElement>("about-dialog");
+const aboutCloseButton = requiredButton("about-close");
 
 let currentResult: RecognitionResult | null = null;
 let busy = false;
@@ -56,6 +55,17 @@ api.error.on((error) => {
 chooseFileButton.addEventListener("click", () => void chooseAndRecognize());
 chooseAnotherButton.addEventListener("click", () => void chooseAndRecognize());
 exportButton.addEventListener("click", () => void exportGp());
+aboutCloseButton.addEventListener("click", () => aboutDialog.close());
+aboutDialog.addEventListener("click", (event) => {
+  if (event.target === aboutDialog) {
+    aboutDialog.close();
+  }
+});
+void listen("open-about", () => {
+  if (!aboutDialog.open) {
+    aboutDialog.showModal();
+  }
+});
 
 async function chooseAndRecognize(): Promise<void> {
   if (busy) {
@@ -89,18 +99,12 @@ async function chooseAndRecognize(): Promise<void> {
   progressPanel.hidden = false;
 
   try {
-    const result = await invoke<RecognitionResult>("recognize_files", {
+    const result = await invoke<RecognitionResult>("recognize_tab_files", {
       inputPaths,
     });
     currentResult = result;
-    const settings = new alphaTab.Settings();
-    const scores = result.musicXmlFiles.map((file) =>
-      alphaTab.importer.ScoreLoader.loadScoreFromBytes(
-        base64ToBytes(file.dataBase64),
-        settings,
-      ),
-    );
-    api.load(mergeScores(scores, settings), [0]);
+    await getCurrentWindow().setSize(new LogicalSize(1080, 760));
+    api.load(base64ToBytes(result.gp5Base64), [0]);
     progressPanel.hidden = true;
   } catch (error) {
     progressPanel.hidden = true;
@@ -121,8 +125,8 @@ async function exportGp(): Promise<void> {
 
   const sourceName = currentResult?.displayName || "未命名曲谱";
   const destination = await save({
-    defaultPath: `${sanitizeFileName(api.score.title || sourceName)}.gp`,
-    filters: [{ name: "Guitar Pro 7/8", extensions: ["gp"] }],
+    defaultPath: `${sanitizeFileName(api.score.title || sourceName)}.gp5`,
+    filters: [{ name: "Guitar Pro 5", extensions: ["gp5"] }],
   });
   if (!destination) {
     return;
@@ -130,13 +134,12 @@ async function exportGp(): Promise<void> {
 
   exportButton.disabled = true;
   try {
-    const bytes = new alphaTab.exporter.Gp7Exporter().export(
-      api.score,
-      new alphaTab.Settings(),
-    );
-    await invoke("export_gp", {
+    if (!currentResult) {
+      throw new Error("没有可导出的 GP5");
+    }
+    await invoke("export_gp5", {
       destination,
-      bytesBase64: bytesToBase64(bytes),
+      bytesBase64: currentResult.gp5Base64,
     });
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
@@ -169,15 +172,6 @@ function base64ToBytes(base64: string): Uint8Array {
     bytes[index] = binary.charCodeAt(index);
   }
   return bytes;
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  const chunkSize = 0x8000;
-  let binary = "";
-  for (let index = 0; index < bytes.length; index += chunkSize) {
-    binary += String.fromCharCode(...bytes.subarray(index, index + chunkSize));
-  }
-  return btoa(binary);
 }
 
 function sanitizeFileName(value: string): string {

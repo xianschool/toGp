@@ -9,10 +9,10 @@
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
     "tauri": "tauri",
-    "prepare:audiveris": "node scripts/prepare-audiveris.mjs",
+    "prepare:tab-converter": "node scripts/prepare-tab-converter.mjs",
     "verify:mxl": "node scripts/verify-mxl-to-gp.mjs",
-    "desktop:dev": "npm run prepare:audiveris && tauri dev",
-    "desktop:build": "npm run prepare:audiveris && node scripts/package-macos.mjs"
+    "desktop:dev": "npm run prepare:tab-converter && tauri dev",
+    "desktop:build": "npm run prepare:tab-converter && node scripts/package-macos.mjs"
   },
   "dependencies": {
     "@coderline/alphatab": "1.9.0",
