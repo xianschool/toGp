@@ -1,0 +1,6 @@
+node_modules/
+dist/
+coverage/
+prototypes/gp-export/artifacts/
+*.log
+.DS_Store

@@ -1,0 +1,10 @@
+\title "ToGpx GP Export Gate"
+\artist "ToGpx"
+\tempo 96
+\instrument 25
+\tuning E4 B3 G3 D3 A2 E2
+.
+:4 3.6 5.6 7.6 8.6 |
+8.5 7.5 5.5 3.5 |
+0.4 0.4 0.4 0.4 |
+\ro \rc 2 3.3.4 5.3.4 7.3.4 8.3.4
