@@ -16,6 +16,52 @@ const MAX_INPUT_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 300 * 1024 * 1024;
 const MAX_FILES: usize = 30;
 const RECOGNITION_TIMEOUT: Duration = Duration::from_secs(20 * 60);
+const ABOUT_MENU_ID: &str = "about";
+const PDF_LOW_RES_ATTEMPTS: &[(u32, u32)] =
+    &[(50, 60_000_000), (30, 25_000_000)];
+
+struct RecognitionEngineError {
+    summary: String,
+    stdout: String,
+    stderr: String,
+}
+
+impl RecognitionEngineError {
+    fn message(summary: String) -> Self {
+        Self {
+            summary,
+            stdout: String::new(),
+            stderr: String::new(),
+        }
+    }
+
+    fn is_image_too_large(&self) -> bool {
+        self.combined_logs().contains("Too large image:")
+    }
+
+    fn user_message(&self) -> String {
+        if self.is_image_too_large() {
+            return "PDF 页面分辨率过高，识别引擎无法读取。已尝试自动降低分辨率，仍然失败。"
+                .to_owned();
+        }
+
+        let logs = self.combined_logs();
+        let detail = logs
+            .lines()
+            .rev()
+            .find(|line| line.contains("ERROR") || line.contains("WARN"))
+            .map(str::trim)
+            .filter(|line| !line.is_empty());
+        match detail {
+            Some(detail) => format!("{}：{}", self.summary, truncate(detail, 600)),
+            None => self.summary.clone(),
+        }
+    }
+
+    fn combined_logs(&self) -> String {
+        format!("{}\n{}", self.stdout, self.stderr)
+    }
+}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -123,20 +169,12 @@ async fn recognize_single(
         .await
         .map_err(|error| format!("无法创建识别输出目录：{error}"))?;
 
-    run_audiveris(
+    transcribe_book(
         executable,
-        vec![
-            "-batch".into(),
-            "-transcribe".into(),
-            "-export".into(),
-            "-constant".into(),
-            "org.audiveris.omr.text.Language.defaultSpecification=eng+chi_sim".into(),
-            "-output".into(),
-            output_dir.clone().into_os_string(),
-            "--".into(),
-            copied_input.into_os_string(),
-        ],
+        &copied_input,
+        &output_dir,
         work_dir,
+        extension == "pdf",
         tessdata,
     )
     .await?;
@@ -186,27 +224,20 @@ async fn recognize_compound(
         work_dir,
         tessdata,
     )
-    .await?;
+    .await
+    .map_err(|error| error.user_message())?;
 
     let compound_book = work_dir.join("playlist.omr");
     if !compound_book.is_file() {
         return Err("Audiveris 未能合并这些图片".to_owned());
     }
 
-    run_audiveris(
+    transcribe_book(
         executable,
-        vec![
-            "-batch".into(),
-            "-transcribe".into(),
-            "-export".into(),
-            "-constant".into(),
-            "org.audiveris.omr.text.Language.defaultSpecification=eng+chi_sim".into(),
-            "-output".into(),
-            output_dir.clone().into_os_string(),
-            "--".into(),
-            compound_book.into_os_string(),
-        ],
+        &compound_book,
+        &output_dir,
         work_dir,
+        inputs.iter().any(|(_, extension)| extension == "pdf"),
         tessdata,
     )
     .await?;
@@ -219,7 +250,7 @@ async fn run_audiveris(
     args: Vec<OsString>,
     work_dir: &Path,
     tessdata: Option<&Path>,
-) -> Result<(), String> {
+) -> Result<(), RecognitionEngineError> {
     let mut command = Command::new(executable);
     command
         .current_dir(work_dir)
@@ -232,24 +263,104 @@ async fn run_audiveris(
         command.env("TESSDATA_PREFIX", tessdata);
     }
 
-    let child = command
-        .spawn()
-        .map_err(|error| format!("无法启动本地识别引擎：{error}"))?;
+    let child = command.spawn().map_err(|error| {
+        RecognitionEngineError::message(format!("无法启动本地识别引擎：{error}"))
+    })?;
     let output = tokio::time::timeout(RECOGNITION_TIMEOUT, child.wait_with_output())
         .await
-        .map_err(|_| "识别超时".to_owned())?
-        .map_err(|error| format!("识别进程失败：{error}"))?;
+        .map_err(|_| RecognitionEngineError::message("识别超时".to_owned()))?
+        .map_err(|error| RecognitionEngineError::message(format!("识别进程失败：{error}")))?;
 
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let detail = stderr.trim();
-        return Err(if detail.is_empty() {
-            format!("识别引擎退出，状态码 {:?}", output.status.code())
-        } else {
-            format!("识别引擎退出：{}", truncate(detail, 1200))
+        return Err(RecognitionEngineError {
+            summary: format!("识别引擎退出，状态码 {:?}", output.status.code()),
+            stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         });
     }
     Ok(())
+}
+
+async fn transcribe_book(
+    executable: &Path,
+    book_path: &Path,
+    output_dir: &Path,
+    work_dir: &Path,
+    allow_pdf_retry: bool,
+    tessdata: Option<&Path>,
+) -> Result<(), String> {
+    let mut last_failure = None;
+
+    for attempt_index in 0..=PDF_LOW_RES_ATTEMPTS.len() {
+        if attempt_index > 0 {
+            tokio::fs::remove_dir_all(output_dir)
+                .await
+                .map_err(|error| format!("无法重置识别输出目录：{error}"))?;
+            tokio::fs::create_dir_all(output_dir)
+                .await
+                .map_err(|error| format!("无法创建识别输出目录：{error}"))?;
+        }
+
+        let extra_constants = attempt_index
+            .checked_sub(1)
+            .and_then(|index| PDF_LOW_RES_ATTEMPTS.get(index))
+            .map(|(resolution, max_pixels)| {
+                vec![
+                    format!("org.audiveris.omr.image.ImageLoading.pdfResolution={resolution}"),
+                    format!("org.audiveris.omr.step.LoadStep.maxPixelCount={max_pixels}"),
+                ]
+            })
+            .unwrap_or_default();
+
+        match run_audiveris(
+            executable,
+            recognition_arguments(output_dir, book_path, &extra_constants),
+            work_dir,
+            tessdata,
+        )
+        .await
+        {
+            Ok(()) => return Ok(()),
+            Err(error) => {
+                let can_retry = allow_pdf_retry
+                    && error.is_image_too_large()
+                    && attempt_index < PDF_LOW_RES_ATTEMPTS.len();
+                last_failure = Some(error);
+                if !can_retry {
+                    break;
+                }
+            }
+        }
+    }
+
+    Err(last_failure
+        .map(|error| error.user_message())
+        .unwrap_or_else(|| "识别引擎没有完成处理".to_owned()))
+}
+
+fn recognition_arguments(
+    output_dir: &Path,
+    book_path: &Path,
+    extra_constants: &[String],
+) -> Vec<OsString> {
+    let mut arguments = vec![
+        "-batch".into(),
+        "-transcribe".into(),
+        "-export".into(),
+        "-constant".into(),
+        "org.audiveris.omr.text.Language.defaultSpecification=eng+chi_sim".into(),
+    ];
+    for constant in extra_constants {
+        arguments.push("-constant".into());
+        arguments.push(constant.into());
+    }
+    arguments.extend([
+        "-output".into(),
+        output_dir.to_path_buf().into_os_string(),
+        "--".into(),
+        book_path.to_path_buf().into_os_string(),
+    ]);
+    arguments
 }
 
 async fn read_result(
@@ -527,7 +638,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{appears_to_be_music_xml, natural_cmp};
+    use super::{appears_to_be_music_xml, natural_cmp, RecognitionEngineError};
     use std::cmp::Ordering;
 
     #[test]
@@ -545,5 +656,17 @@ mod tests {
         assert!(!appears_to_be_music_xml(
             br#"<?xml version="1.0"?><play-list><excerpt></excerpt></play-list>"#
         ));
+    }
+
+    #[test]
+    fn recognizes_oversized_pdf_failure() {
+        let error = RecognitionEngineError {
+            summary: "识别引擎退出，状态码 Some(1)".to_owned(),
+            stdout: "WARN Too large image: 604,196,208 pixels (vs 20,000,000 max)".to_owned(),
+            stderr: String::new(),
+        };
+
+        assert!(error.is_image_too_large());
+        assert!(error.user_message().contains("PDF"));
     }
 }
