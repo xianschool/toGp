@@ -8,102 +8,34 @@
   </head>
   <body>
     <div id="app">
-      <header class="app-header">
-        <a class="brand" href="#" aria-label="toGp 首页">
-          <span class="brand-mark" aria-hidden="true">
-            <span>♪</span>
-          </span>
-          <span class="brand-copy">
-            <strong>toGp</strong>
-            <small>本地吉他谱转换</small>
-          </span>
-        </a>
-        <div class="privacy-note">
-          <span class="status-dot" aria-hidden="true"></span>
-          文件只在你的 Mac 上处理
+      <header class="topbar">
+        <h1>toGp</h1>
+        <div id="result-actions" class="result-actions" hidden>
+          <button id="choose-another" class="button button-muted" type="button">选择图片</button>
+          <button id="export-gp" class="button button-primary" type="button">导出 GP</button>
         </div>
       </header>
 
       <main>
-        <section class="intro" aria-labelledby="page-title">
-          <p class="eyebrow">PDF / 图片 → Guitar Pro 7/8</p>
-          <h1 id="page-title">把扫描吉他谱<br />变成可编辑的工程文件</h1>
-          <p class="intro-copy">
-            选择清晰的印刷谱，toGp 会在本机识别乐谱并生成
-            <code>.gp</code>。不上传服务器，不需要账号。
-          </p>
-          <div class="primary-actions">
-            <button id="choose-file" class="button button-primary" type="button">
-              <span class="button-icon" aria-hidden="true">＋</span>
-              选择曲谱
-            </button>
-            <button id="open-audiveris" class="button button-secondary" type="button">
-              打开高级校对
-            </button>
-          </div>
-          <p class="support-note">支持 PDF、PNG、JPEG 和 TIFF，单文件不超过 100 MB。</p>
+        <section id="start" class="start">
+          <button id="choose-file" class="button button-primary button-upload" type="button">
+            选择图片
+          </button>
         </section>
 
-        <section id="progress-panel" class="progress-panel" aria-live="polite" hidden>
-          <div class="spinner" aria-hidden="true"></div>
-          <div>
-            <strong id="progress-title">正在识别曲谱</strong>
-            <p id="progress-detail">清晰曲谱通常需要几十秒到几分钟。</p>
-          </div>
+        <section id="progress-panel" class="progress" aria-live="polite" hidden>
+          <span class="spinner" aria-hidden="true"></span>
+          <span>识别中…</span>
         </section>
 
-        <section id="error-panel" class="error-panel" role="alert" hidden>
-          <strong>转换没有完成</strong>
+        <section id="error-panel" class="error" role="alert" hidden>
           <p id="error-message"></p>
-          <div class="error-actions">
-            <button id="retry-audiveris" class="button button-secondary" type="button">
-              打开 Audiveris 检查
-            </button>
-          </div>
         </section>
 
-        <section id="workspace" class="workspace" aria-labelledby="score-title" hidden>
-          <div class="workspace-header">
-            <div>
-              <p class="eyebrow">识别结果</p>
-              <h2 id="score-title">曲谱预览</h2>
-              <p id="score-meta" class="score-meta"></p>
-            </div>
-            <div class="workspace-actions">
-              <button id="choose-another" class="button button-secondary" type="button">
-                换一份曲谱
-              </button>
-              <button id="export-gp" class="button button-primary" type="button">
-                导出 .gp
-              </button>
-            </div>
-          </div>
-
-          <div class="score-toolbar" aria-label="播放控制">
-            <button id="play-pause" class="icon-button" type="button" aria-label="播放">
-              <span id="play-icon" aria-hidden="true">▶</span>
-            </button>
-            <label class="tempo-control">
-              <span>速度</span>
-              <input id="speed" type="range" min="50" max="120" value="100" />
-              <output id="speed-label">100%</output>
-            </label>
-            <span id="playback-time" class="playback-time">00:00</span>
-          </div>
-
-          <div id="score-scroll" class="score-scroll">
-            <div id="alphaTab" class="alpha-tab"></div>
-          </div>
+        <section id="workspace" class="workspace" hidden>
+          <div id="alphaTab"></div>
         </section>
       </main>
-
-      <footer class="app-footer">
-        <span>
-          toGp 0.1.0 ·
-          <button id="open-license" class="footer-link" type="button">AGPL-3.0 许可证</button>
-        </span>
-        <span>识别引擎：Audiveris 5.11.0</span>
-      </footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

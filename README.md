@@ -10,7 +10,9 @@ The app does not upload scores, require an account, send telemetry, or contact a
 
 ## Status
 
-The first milestone targets macOS Apple Silicon. The current workflow supports PDF, PNG, JPEG and TIFF input, Audiveris transcription, alphaTab preview/playback, and `.gp` export.
+The first milestone targets macOS Apple Silicon. The current workflow supports PDF, PNG, JPEG and TIFF input, Audiveris transcription, alphaTab score preview, and `.gp` export.
+
+Multiple files can be selected in one operation. toGp sorts their file names naturally (`page2` before `page10`) and uses an Audiveris playlist to combine them into one score. File names that contain scan or page numbers therefore produce the most predictable results.
 
 Audiveris works best with clear printed scores. Handwritten music, strongly distorted photos, and complex layouts may still need correction in the Audiveris editor.
 
