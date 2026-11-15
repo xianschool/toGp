@@ -61,6 +61,11 @@ await copyFile(
   path.join(root, "THIRD_PARTY_NOTICES.md"),
   path.join(legalDestination, "THIRD_PARTY_NOTICES.md"),
 );
+await mkdir(resourceRoot, { recursive: true });
+await copyFile(
+  path.join(root, "scripts/tab-converter-runner.py"),
+  path.join(resourceRoot, "runner.py"),
+);
 
 if (
   (await readFile(markerPath, "utf8").catch(() => "")) === `${PREPARED_REVISION}\n` &&
@@ -124,10 +129,6 @@ await Promise.all(
   }),
 );
 
-await copyFile(
-  path.join(root, "scripts/tab-converter-runner.py"),
-  path.join(resourceRoot, "runner.py"),
-);
 await mkdir(path.join(resourceRoot, "licenses"), { recursive: true });
 for (const [name, url] of [
   ["LICENSE", `https://raw.githubusercontent.com/F100Pilot/PDF-to-GP5/${COMMIT}/LICENSE`],

@@ -8,7 +8,11 @@ import "./style.css";
 interface RecognitionResult {
   displayName: string;
   gp5Base64: string;
-  report: unknown;
+  report: {
+    title?: string;
+    artist?: string;
+    warnings?: string[];
+  };
 }
 
 const chooseFileButton = requiredButton("choose-file");
@@ -41,11 +45,23 @@ const api = new alphaTab.AlphaTabApi(requiredElement("alphaTab"), {
   },
 });
 
-api.scoreLoaded.on(() => {
+api.scoreLoaded.on((score) => {
+  let metadataChanged = false;
+  if (currentResult?.report.title) {
+    score.title = currentResult.report.title;
+    metadataChanged = true;
+  }
+  if (currentResult?.report.artist) {
+    score.artist = currentResult.report.artist;
+    metadataChanged = true;
+  }
   document.body.classList.add("has-result");
   workspace.hidden = false;
   resultActions.hidden = false;
   exportButton.disabled = false;
+  if (metadataChanged) {
+    api.render();
+  }
 });
 
 api.error.on((error) => {
