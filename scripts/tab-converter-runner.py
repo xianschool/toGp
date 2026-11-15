@@ -9,7 +9,7 @@ import re
 import sys
 import traceback
 import unicodedata
-from bisect import bisect_right
+from bisect import bisect_left, bisect_right
 from pathlib import Path
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
@@ -18,6 +18,20 @@ CHORD_NAME = re.compile(
     r"(?:/[A-G][#b]?\d*(?:[-+]\d+)?)?$",
     re.IGNORECASE,
 )
+FALLBACK_CHORD_SHAPES = {
+    "A": {1: 0, 2: 2, 3: 2, 4: 2, 5: 0},
+    "Asus2": {1: 0, 2: 0, 3: 2, 4: 2, 5: 0},
+    "Asus4": {1: 0, 2: 3, 3: 2, 4: 2, 5: 0},
+    "B7": {1: 2, 2: 0, 3: 2, 4: 1, 5: 2},
+    "Bm": {1: 2, 2: 3, 3: 4, 4: 4, 5: 2},
+    "C": {1: 0, 2: 1, 3: 0, 4: 2, 5: 3},
+    "D": {1: 2, 2: 3, 3: 2},
+    "Em": {1: 0, 2: 0, 3: 0, 4: 2, 5: 2, 6: 0},
+    "Em/D": {1: 0, 2: 0, 3: 0, 4: 0},
+    "Em/D#": {1: 0, 2: 0, 3: 0, 4: 1},
+    "F#7": {1: 2, 2: 2, 3: 3, 4: 2, 5: 4, 6: 2},
+    "F#m7": {1: 2, 2: 2, 3: 2, 4: 2, 5: 4, 6: 2},
+}
 
 
 def emit(payload: dict) -> None:
@@ -275,7 +289,90 @@ def detect_chord_labels(path: Path) -> list[dict]:
             else:
                 merged.append(dict(item))
         rows.extend(merged)
-    return sorted(rows, key=lambda item: (item["y"], item["x0"]))
+    ordered = sorted(rows, key=lambda item: (item["y"], item["x0"]))
+    for item in ordered:
+        fallback = FALLBACK_CHORD_SHAPES.get(item["text"].split(" ", 1)[0], {})
+        detected = chord_shape_from_diagram(pixels, item)
+        item["shape"] = {**fallback, **detected}
+    return ordered
+
+
+def chord_shape_from_diagram(pixels, label: dict) -> dict[int, int]:
+    import cv2
+    import numpy as np
+
+    center_x = (label["x0"] + label["x1"]) / 2
+    x0 = max(0, round(center_x - 70))
+    x1 = min(pixels.shape[1], round(center_x + 70))
+    y0 = max(0, round(label["y"] + 5))
+    y1 = min(pixels.shape[0], round(label["y"] + 105))
+    crop = pixels[y0:y1, x0:x1]
+    if crop.size == 0:
+        return {}
+    gray = cv2.cvtColor(crop, cv2.COLOR_RGB2GRAY)
+    dark = (gray < 90).astype(np.uint8) * 255
+    connected = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
+    contours, _ = cv2.findContours(
+        connected, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    boxes = []
+    for contour in contours:
+        x, y, width, height = cv2.boundingRect(contour)
+        if 30 <= width <= 90 and 30 <= height <= 90:
+            boxes.append((width * height, x, y, width, height))
+    if not boxes:
+        return {}
+    _, x, y, width, height = max(boxes)
+    grid = (gray[y : y + height, x : x + width] < 100).astype(np.uint8)
+
+    def grouped_lines(values):
+        groups = []
+        for value in values:
+            if groups and value - groups[-1][-1] <= 2:
+                groups[-1].append(value)
+            else:
+                groups.append([value])
+        return [sum(group) / len(group) for group in groups]
+
+    columns = grouped_lines(
+        [
+            index
+            for index, count in enumerate(grid.sum(axis=0))
+            if count > height * 0.55
+        ]
+    )
+    rows = grouped_lines(
+        [
+            index
+            for index, count in enumerate(grid.sum(axis=1))
+            if count > width * 0.55
+        ]
+    )
+    if len(columns) < 6 or len(rows) < 3:
+        return {}
+
+    dots = cv2.erode((gray[y : y + height, x : x + width] < 80).astype(np.uint8), np.ones((2, 2), np.uint8))
+    count, _, stats, centers = cv2.connectedComponentsWithStats(dots, 8)
+    shape = {}
+    for component in range(1, count):
+        component_x, component_y, component_width, component_height, area = stats[
+            component
+        ]
+        if not (3 <= component_width <= 12 and 3 <= component_height <= 12):
+            continue
+        if area < 6:
+            continue
+        center_y = centers[component][1]
+        fret = bisect_left(rows, center_y)
+        if fret < 1:
+            continue
+        column = min(
+            range(6),
+            key=lambda index: abs(centers[component][0] - columns[index]),
+        )
+        string_number = 6 - column
+        shape[string_number] = fret
+    return shape
 
 
 def extract_image_metadata(path: Path) -> tuple[str, str]:
@@ -355,6 +452,7 @@ def add_chords_to_gp5(
     }
     measure_offset = 0
     markers = []
+    active_shape = {}
 
     for page_number in sorted(captured_pages):
         captured = captured_pages[page_number]
@@ -392,22 +490,44 @@ def add_chords_to_gp5(
                     max(bisect_right(bars, x) - 1, 0),
                     max(0, len(bars) - 2),
                 )
-                by_measure.setdefault(local_measure, []).append(label["text"])
-            for local_measure, names in sorted(by_measure.items()):
+                by_measure.setdefault(local_measure, []).append(label)
+            for local_measure in range(max(0, len(bars) - 1)):
                 measure_index = measure_offset + local_measure
                 if measure_index >= len(track.measures):
                     continue
-                beat = track.measures[measure_index].voices[0].beats[0]
-                name = " / ".join(dict.fromkeys(names))[:22]
-                beat.effect.chord = gp.Chord(
-                    length=len(track.strings),
-                    name=name,
-                    firstFret=0,
-                    add=False,
-                    show=False,
-                    strings=[-1] * len(track.strings),
-                )
-                markers.append({"bar": measure_index + 1, "name": name})
+                labels_here = by_measure.get(local_measure, [])
+                if labels_here:
+                    name = " / ".join(
+                        dict.fromkeys(label["text"] for label in labels_here)
+                    )[:22]
+                    shape = {}
+                    for label in labels_here:
+                        shape.update(label.get("shape", {}))
+                    active_shape = shape
+                    beat = track.measures[measure_index].voices[0].beats[0]
+                    beat.effect.chord = gp.Chord(
+                        length=len(track.strings),
+                        name=name,
+                        firstFret=0,
+                        add=False,
+                        show=False,
+                        strings=[-1] * len(track.strings),
+                    )
+                    markers.append(
+                        {
+                            "bar": measure_index + 1,
+                            "name": name,
+                            "shape": dict(sorted(shape.items())),
+                        }
+                    )
+                if active_shape:
+                    for voice in track.measures[measure_index].voices:
+                        for chord_beat in voice.beats:
+                            for note in chord_beat.notes:
+                                if note.type != gp.NoteType.dead:
+                                    continue
+                                note.type = gp.NoteType.normal
+                                note.value = active_shape.get(note.string, 0)
             measure_offset += max(0, len(bars) - 1)
 
     buffer = io.BytesIO()
