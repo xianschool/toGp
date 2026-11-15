@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "check": "tsc --noEmit",
+    "test:tab-model": "src-tauri/resources/tab-converter/python/bin/python3.12 scripts/tab-score-model.test.py",
     "tauri": "tauri",
     "inspect:score-source": "node scripts/inspect-score-source.mjs",
     "prepare:tab-converter": "node scripts/prepare-tab-converter.mjs",

@@ -15,6 +15,7 @@ from pathlib import Path
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
 ACTIVE_TAB_PROFILE = "generic"
+TAB_SCORE_SCHEMA_VERSION = 1
 CHORD_NAME = re.compile(
     r"^[A-G][#b]?(?:m|maj|min|sus|add|dim|aug|\u00b0)?\d*(?:[-+]\d+)?"
     r"(?:/[A-G][#b]?\d*(?:[-+]\d+)?)?$",
@@ -613,6 +614,357 @@ def detect_image_profile(path: Path) -> str:
     return "generic"
 
 
+def enum_value(value):
+    return getattr(value, "value", value)
+
+
+def enum_name(value) -> str:
+    name = getattr(value, "name", None)
+    if name:
+        return str(name)
+    return str(value).rsplit(".", 1)[-1]
+
+
+def normalized_time_signature(signature) -> str:
+    numerator = int(getattr(signature, "numerator", 0) or 0)
+    denominator = int(enum_value(getattr(signature, "denominator", 0)) or 0)
+    if numerator <= 0 or denominator <= 0:
+        return ""
+    return f"{numerator}/{denominator}"
+
+
+def build_layout_systems(report: dict, captured_pages: dict) -> tuple[list[dict], list[dict]]:
+    tracks = report.get("tracks", [])
+    all_systems = []
+    track_systems = []
+    for track in tracks:
+        systems = []
+        page_offsets = Counter()
+        for system_index, detail in enumerate(track.get("systems_detail", []), start=1):
+            page = int(detail.get("page") or 1)
+            system = {
+                "index": system_index,
+                "page": page,
+                "source": str(detail.get("source") or "unknown"),
+                "strings": int(track.get("strings") or 0),
+                "measures": detail.get("measures"),
+                "notes": int(detail.get("notes") or 0),
+            }
+            captured = captured_pages.get(page, {}).get("systems", [])
+            captured_index = page_offsets[page]
+            page_offsets[page] += 1
+            if captured_index < len(captured):
+                geometry = captured[captured_index]
+                system["top"] = round(float(geometry.get("top", 0)), 2)
+                system["bars"] = [
+                    round(float(value), 2) for value in geometry.get("bars", [])
+                ]
+                system["layoutNotes"] = int(geometry.get("events") or 0)
+            systems.append(system)
+            all_systems.append(system)
+        track_systems.append(systems)
+    return all_systems, track_systems
+
+
+def note_techniques(note) -> list[str]:
+    effect = getattr(note, "effect", None)
+    if effect is None:
+        return []
+    techniques = []
+    for attribute, label in (
+        ("hammer", "hammer-on"),
+        ("palmMute", "palm-mute"),
+        ("letRing", "let-ring"),
+        ("staccato", "staccato"),
+        ("vibrato", "vibrato"),
+        ("ghostNote", "ghost-note"),
+        ("accentuatedNote", "accent"),
+        ("heavyAccentuatedNote", "heavy-accent"),
+    ):
+        if getattr(effect, attribute, False):
+            techniques.append(label)
+    if getattr(effect, "bend", None) is not None:
+        techniques.append("bend")
+    if getattr(effect, "harmonic", None) is not None:
+        techniques.append("harmonic")
+    if getattr(effect, "slides", None):
+        techniques.append("slide")
+    if getattr(effect, "trill", None) is not None:
+        techniques.append("trill")
+    if getattr(effect, "tremoloPicking", None) is not None:
+        techniques.append("tremolo-picking")
+    return techniques
+
+
+def build_score_measure(measure, number: int) -> dict:
+    events = []
+    beat_count = 0
+    for voice_index, voice in enumerate(getattr(measure, "voices", [])):
+        for beat in getattr(voice, "beats", []):
+            beat_count += 1
+            start = int(getattr(beat, "startInMeasure", 0) or 0)
+            duration = int(getattr(getattr(beat, "duration", None), "time", 0) or 0)
+            for note in getattr(beat, "notes", []):
+                events.append(
+                    {
+                        "voice": voice_index + 1,
+                        "string": int(getattr(note, "string", 0) or 0),
+                        "fret": int(getattr(note, "value", 0) or 0),
+                        "start": start,
+                        "duration": duration,
+                        "type": enum_name(getattr(note, "type", "normal")),
+                        "velocity": int(getattr(note, "velocity", 0) or 0),
+                        "techniques": note_techniques(note),
+                    }
+                )
+    events.sort(key=lambda event: (event["start"], event["voice"], event["string"]))
+    header = getattr(measure, "header", None)
+    signature = getattr(header, "timeSignature", None)
+    return {
+        "number": number,
+        "start": int(getattr(measure, "start", 0) or 0),
+        "duration": max(
+            int(getattr(measure, "end", 0) or 0) - int(getattr(measure, "start", 0) or 0),
+            0,
+        ),
+        "timeSignature": normalized_time_signature(signature),
+        "beats": beat_count,
+        "eventCount": len(events),
+        "events": events,
+    }
+
+
+def validate_tab_score(tab_score: dict) -> dict:
+    checks = []
+
+    def add_check(identifier: str, status: str, message: str) -> None:
+        checks.append({"id": identifier, "status": status, "message": message})
+
+    tracks = tab_score.get("tracks", [])
+    if not tracks:
+        add_check("tracks-present", "error", "没有任何六线谱轨道。")
+    else:
+        add_check("tracks-present", "pass", f"共识别出 {len(tracks)} 条轨道。")
+
+    track_measure_counts = set()
+    for track_index, track in enumerate(tracks, start=1):
+        label = track.get("name") or f"轨道 {track_index}"
+        measures = len(track.get("measures", []))
+        track_measure_counts.add(measures)
+        report_measures = track.get("reportedMeasures")
+        if isinstance(report_measures, int) and report_measures != measures:
+            add_check(
+                "track-measure-count",
+                "warning",
+                f"{label} 的识别报告为 {report_measures} 小节，标准化结果包含 {measures} 小节。",
+            )
+
+        systems = track.get("systems", [])
+        measured_systems = [
+            system
+            for system in systems
+            if isinstance(system.get("measures"), int)
+        ]
+        if measured_systems and sum(system["measures"] for system in measured_systems) != measures:
+            add_check(
+                "system-measure-coverage",
+                "warning",
+                f"轨道“{label}”的谱表系统合计 {sum(system['measures'] for system in measured_systems)} 小节，"
+                f"与轨道总小节数 {measures} 不一致。",
+            )
+        elif measured_systems:
+            add_check(
+                "system-measure-coverage",
+                "pass",
+                f"轨道“{label}”的 {len(systems)} 个谱表系统完整覆盖 {measures} 小节。",
+            )
+
+        string_counts = {
+            system["strings"]
+            for system in systems
+            if isinstance(system.get("strings"), int) and system["strings"] > 0
+        }
+        expected_strings = int(track.get("strings") or 0)
+        if string_counts and (len(string_counts) > 1 or expected_strings not in string_counts):
+            add_check(
+                "system-string-count",
+                "warning",
+                f"{label} 的主谱表为 {expected_strings} 弦，但各系统检测到弦数 {sorted(string_counts)}。",
+            )
+
+        numbers = [measure.get("number") for measure in track.get("measures", [])]
+        if numbers != list(range(1, measures + 1)):
+            add_check(
+                "measure-numbering",
+                "warning",
+                f"{label} 的小节编号不连续。",
+            )
+
+        invalid_events = []
+        for measure in track.get("measures", []):
+            for event in measure.get("events", []):
+                string = event.get("string")
+                fret = event.get("fret")
+                if (
+                    not isinstance(string, int)
+                    or not 1 <= string <= expected_strings
+                    or not isinstance(fret, int)
+                    or fret < 0
+                ):
+                    invalid_events.append(
+                        {"bar": measure.get("number"), "string": string, "fret": fret}
+                    )
+        if invalid_events:
+            first = invalid_events[0]
+            add_check(
+                "event-range",
+                "warning",
+                f"{label} 有 {len(invalid_events)} 个音符的弦号或品位超出范围"
+                f"（首个：第 {first['bar']} 小节，弦 {first['string']}，品 {first['fret']}）。",
+            )
+
+    if len(track_measure_counts) > 1:
+        add_check(
+            "track-alignment",
+            "warning",
+            f"各轨道的小节数不一致：{sorted(track_measure_counts)}。",
+        )
+
+    status = (
+        "review"
+        if any(check["status"] in {"warning", "error"} for check in checks)
+        else "ok"
+    )
+    return {
+        "status": status,
+        "checks": checks,
+        "issues": [
+            check for check in checks if check["status"] in {"warning", "error"}
+        ],
+    }
+
+
+def build_tab_score(
+    gp5: bytes,
+    report: dict,
+    captured_pages: dict,
+    inputs: list[Path],
+    source_profile: str,
+) -> dict:
+    import guitarpro as gp
+
+    song = gp.parse(io.BytesIO(gp5))
+    all_systems, track_systems = build_layout_systems(report, captured_pages)
+    reported_tracks = report.get("tracks", [])
+    tracks = []
+    for track_index, track in enumerate(song.tracks):
+        reported = reported_tracks[track_index] if track_index < len(reported_tracks) else {}
+        measures = [
+            build_score_measure(measure, number)
+            for number, measure in enumerate(track.measures, start=1)
+        ]
+        tracks.append(
+            {
+                "index": track_index + 1,
+                "name": str(getattr(track, "name", "") or reported.get("name") or ""),
+                "kind": "tab" if track_index < len(reported_tracks) else "generated",
+                "strings": len(getattr(track, "strings", [])),
+                "tuning": [
+                    {
+                        "string": int(getattr(string, "number", 0) or 0),
+                        "midi": int(getattr(string, "value", 0) or 0),
+                    }
+                    for string in getattr(track, "strings", [])
+                ],
+                "reportedMeasures": reported.get("measures"),
+                "reportedNotes": reported.get("notes"),
+                "systems": track_systems[track_index]
+                if track_index < len(track_systems)
+                else [],
+                "measures": measures,
+            }
+        )
+
+    page_numbers = sorted(
+        {system["page"] for system in all_systems}
+        | {int(page) for page in captured_pages}
+    )
+    pages = []
+    for page_number in page_numbers:
+        captured = captured_pages.get(page_number, {})
+        pages.append(
+            {
+                "number": page_number,
+                "width": captured.get("width"),
+                "systems": [
+                    system for system in all_systems if system["page"] == page_number
+                ],
+            }
+        )
+
+    input_extensions = {path.suffix.lower() for path in inputs}
+    source_kinds = {
+        source
+        for track in reported_tracks
+        for source in track.get("sources", [])
+        if isinstance(source, str)
+    }
+    if input_extensions <= IMAGE_EXTENSIONS:
+        render_type = "digital-raster-tab"
+    elif source_kinds == {"image"}:
+        render_type = "raster-pdf"
+    elif "image" in source_kinds:
+        render_type = "mixed-vector-raster"
+    else:
+        render_type = "vector-text"
+
+    tab_score = {
+        "schemaVersion": TAB_SCORE_SCHEMA_VERSION,
+        "source": {
+            "profile": source_profile,
+            "renderType": render_type,
+            "inputKinds": sorted(extension.lstrip(".") for extension in input_extensions),
+            "layouts": sorted(source_kinds),
+            "files": [path.name for path in inputs],
+        },
+        "pages": pages,
+        "systems": all_systems,
+        "tracks": tracks,
+        "texts": {
+            "title": report.get("title", ""),
+            "artist": report.get("artist", ""),
+            "sections": report.get("sections", []),
+            "timedLyrics": report.get("timed_lyrics", []),
+        },
+        "chords": report.get("chords", []),
+        "totals": {
+            "pages": len(page_numbers),
+            "systems": len(all_systems),
+            "measures": max((len(track["measures"]) for track in tracks), default=0),
+            "events": sum(
+                measure["eventCount"]
+                for track in tracks
+                for measure in track["measures"]
+            ),
+        },
+    }
+    tab_score["validation"] = validate_tab_score(tab_score)
+    return tab_score
+
+
+def normalize_report_aliases(report: dict) -> None:
+    for snake_case, camel_case in (
+        ("source_profile", "sourceProfile"),
+        ("time_signature", "timeSignature"),
+        ("time_signature_changes", "timeSignatureChanges"),
+        ("tempo_changes", "tempoChanges"),
+        ("repeats_expanded", "repeatsExpanded"),
+        ("timed_lyrics", "timedLyrics"),
+    ):
+        if snake_case in report and camel_case not in report:
+            report[camel_case] = report[snake_case]
+
+
 def add_chords_to_gp5(
     gp5: bytes,
     captured_pages: dict,
@@ -864,8 +1216,39 @@ def run(job_path: Path, output_path: Path) -> None:
         )
         result.gp5 = gp5
         result.report["chords"] = chords
-        result.report["capo"] = detected_metadata.get("capo", 0)
-        result.report["source_profile"] = ACTIVE_TAB_PROFILE
+    result.report["capo"] = detected_metadata.get("capo", 0)
+    result.report["source_profile"] = ACTIVE_TAB_PROFILE
+    try:
+        result.report["tabScore"] = build_tab_score(
+            result.gp5,
+            result.report,
+            captured_pages,
+            inputs,
+            ACTIVE_TAB_PROFILE,
+        )
+        validation = result.report["tabScore"]["validation"]
+        result.report.setdefault("warnings", []).extend(
+            issue["message"] for issue in validation["issues"]
+        )
+    except Exception as error:
+        result.report["tabScore"] = {
+            "schemaVersion": TAB_SCORE_SCHEMA_VERSION,
+            "validation": {
+                "status": "unavailable",
+                "checks": [],
+                "issues": [
+                    {
+                        "id": "tab-score-unavailable",
+                        "status": "warning",
+                        "message": f"标准化结构报告生成失败：{error}",
+                    }
+                ],
+            },
+        }
+        result.report.setdefault("warnings", []).append(
+            f"标准化结构报告生成失败，已保留转换结果：{error}"
+        )
+    normalize_report_aliases(result.report)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(result.gp5)
     emit({"ok": True, "report": result.report})

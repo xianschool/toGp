@@ -15,6 +15,23 @@ interface RecognitionResult {
     capo?: number;
     measures?: number;
     sourceProfile?: string;
+    tabScore?: {
+      source?: {
+        renderType?: string;
+      };
+      totals?: {
+        pages?: number;
+        systems?: number;
+        measures?: number;
+        events?: number;
+      };
+      validation?: {
+        status?: string;
+        issues?: Array<{
+          message?: string;
+        }>;
+      };
+    };
     tracks?: Array<{
       strings?: number;
       notes?: number;
@@ -255,6 +272,9 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
   const stats = [
     track?.strings ? `${track.strings} 弦` : "",
     report.measures ? `${report.measures} 小节` : "",
+    report.tabScore?.totals?.systems
+      ? `${report.tabScore.totals.systems} 谱表`
+      : "",
     report.tempo ? `${report.tempo} BPM` : "",
     report.capo ? `Capo ${report.capo}` : "",
     profileLabel(report.sourceProfile),
@@ -269,7 +289,16 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
     }),
   );
 
-  const warnings = (report.warnings ?? []).filter((warning) => warning.trim());
+  const validationWarnings = (report.tabScore?.validation?.issues ?? [])
+    .map((issue) => issue.message ?? "")
+    .filter((warning) => warning.trim());
+  const warnings = Array.from(
+    new Set(
+      [...(report.warnings ?? []), ...validationWarnings].filter((warning) =>
+        warning.trim(),
+      ),
+    ),
+  );
   resultWarningList.replaceChildren(
     ...warnings.map((warning) => {
       const item = document.createElement("li");
