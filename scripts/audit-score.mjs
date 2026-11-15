@@ -34,6 +34,7 @@ export function evaluateExpectations(report, expectations) {
     renderType: report.sourceAdapter?.renderType,
     sourceFamily: report.sourceAdapter?.sourceFamily,
     measures: report.measures,
+    repeats: report.repeats,
     notes: report.notes,
     pages: report.tabScore?.totals?.pages,
     systems: report.tabScore?.totals?.systems,

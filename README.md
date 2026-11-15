@@ -3,14 +3,14 @@
 toGp is a local macOS utility that turns printed guitar tablature into editable Guitar Pro 5 `.gp5` files.
 
 ```text
-tab PDF / image -> local tab OMR -> GP5 -> alphaTab preview -> .gp5
+tab PDF / image -> local tab OMR -> GP5
 ```
 
 The app does not upload scores, require an account, send telemetry, or contact an application server. All processing happens on the user's Mac.
 
 ## Status
 
-The first milestone targets macOS Apple Silicon. The current workflow supports PDF, PNG, JPEG and TIFF input, tablature transcription, alphaTab score preview, and `.gp5` export.
+The first milestone targets macOS Apple Silicon. The current workflow supports PDF, PNG, JPEG and TIFF input, local tablature transcription, a completion/quality summary, and `.gp5` export. A success dialog appears after generation and again after the file is saved.
 
 Multiple images can be selected in one operation. toGp sorts their file names naturally (`page2` before `page10`) and combines them into one tablature track. A PDF with embedded text and vector lines is parsed directly; scanned pages use an offline OCR model.
 

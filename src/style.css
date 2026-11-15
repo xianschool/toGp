@@ -221,20 +221,38 @@ main {
   margin-top: 6px;
 }
 
-.workspace {
-  min-height: 0;
+.completion {
+  display: flex;
   flex: 1;
-  overflow: auto;
-  padding: 18px;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
 }
 
-#alphaTab {
-  min-height: 100%;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--paper);
-  box-shadow: 0 12px 34px rgba(55, 48, 35, 0.08);
-  padding: 18px;
+.completion-card {
+  width: min(430px, 100%);
+  text-align: center;
+}
+
+.completion-kicker {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.completion-card h2 {
+  margin: 0 0 12px;
+  font-size: 30px;
+  letter-spacing: -0.04em;
+}
+
+.completion-card > p:last-child {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.75;
 }
 
 body.has-result .start,
@@ -258,7 +276,8 @@ body.has-result .progress {
   pointer-events: none;
 }
 
-.about-dialog {
+.about-dialog,
+.success-dialog {
   width: min(420px, calc(100vw - 40px));
   padding: 0;
   border: 1px solid var(--line);
@@ -268,9 +287,42 @@ body.has-result .progress {
   box-shadow: 0 24px 70px rgba(55, 48, 35, 0.22);
 }
 
-.about-dialog::backdrop {
+.about-dialog::backdrop,
+.success-dialog::backdrop {
   background: rgba(29, 29, 27, 0.3);
   backdrop-filter: blur(3px);
+}
+
+.success-card {
+  padding: 30px;
+}
+
+.success-kicker {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.success-card h2 {
+  margin: 0;
+  font-size: 26px;
+  letter-spacing: -0.035em;
+}
+
+.success-card > p:not(.success-kicker) {
+  margin: 14px 0 24px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.success-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .about-card {

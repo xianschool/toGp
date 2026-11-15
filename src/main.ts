@@ -1,4 +1,3 @@
-import * as alphaTab from "@coderline/alphatab";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
@@ -14,6 +13,7 @@ interface RecognitionResult {
     tempo?: number;
     capo?: number;
     measures?: number;
+    repeats?: number;
     sourceProfile?: string;
     sourceAdapter?: {
       id?: string;
@@ -71,13 +71,18 @@ const progressLabel = requiredElement("progress-label");
 const cancelRecognitionButton = requiredButton("cancel-recognition");
 const errorPanel = requiredElement("error-panel");
 const errorMessage = requiredElement("error-message");
-const workspace = requiredElement("workspace");
 const dropOverlay = requiredElement("drop-overlay");
 const resultSummary = requiredElement("result-summary");
 const resultStats = requiredElement("result-stats");
 const resultWarnings = requiredElement<HTMLDetailsElement>("result-warnings");
 const resultWarningSummary = requiredElement("result-warning-summary");
 const resultWarningList = requiredElement("result-warning-list");
+const completion = requiredElement("completion");
+const successDialog = requiredElement<HTMLDialogElement>("success-dialog");
+const successTitle = requiredElement("success-title");
+const successMessage = requiredElement("success-message");
+const successCloseButton = requiredButton("success-close");
+const successExportButton = requiredButton("success-export");
 const aboutDialog = requiredElement<HTMLDialogElement>("about-dialog");
 const aboutCloseButton = requiredButton("about-close");
 
@@ -86,49 +91,20 @@ let busy = false;
 let cancelling = false;
 const appWindow = getCurrentWindow();
 
-const baseUrl = import.meta.env.BASE_URL;
-const api = new alphaTab.AlphaTabApi(requiredElement("alphaTab"), {
-  core: {
-    fontDirectory: `${baseUrl}font/`,
-    useWorkers: false,
-  },
-  display: {
-    layoutMode: alphaTab.LayoutMode.Page,
-    staveProfile: alphaTab.StaveProfile.ScoreTab,
-  },
-  player: {
-    enablePlayer: false,
-  },
-});
-
-api.scoreLoaded.on((score) => {
-  let metadataChanged = false;
-  if (currentResult?.report.title) {
-    score.title = currentResult.report.title;
-    metadataChanged = true;
-  }
-  if (currentResult?.report.artist) {
-    score.artist = currentResult.report.artist;
-    metadataChanged = true;
-  }
-  document.body.classList.add("has-result");
-  renderRecognitionSummary(currentResult?.report);
-  workspace.hidden = false;
-  resultActions.hidden = false;
-  exportButton.disabled = false;
-  if (metadataChanged) {
-    api.render();
-  }
-});
-
-api.error.on((error) => {
-  showError(error.message || "曲谱预览失败");
-});
-
 chooseFileButton.addEventListener("click", () => void chooseAndRecognize());
 chooseAnotherButton.addEventListener("click", () => void chooseAndRecognize());
 cancelRecognitionButton.addEventListener("click", () => void cancelRecognition());
 exportButton.addEventListener("click", () => void exportGp());
+successCloseButton.addEventListener("click", () => successDialog.close());
+successExportButton.addEventListener("click", () => {
+  successDialog.close();
+  void exportGp();
+});
+successDialog.addEventListener("click", (event) => {
+  if (event.target === successDialog) {
+    successDialog.close();
+  }
+});
 aboutCloseButton.addEventListener("click", () => aboutDialog.close());
 aboutDialog.addEventListener("click", (event) => {
   if (event.target === aboutDialog) {
@@ -191,9 +167,12 @@ async function recognizePaths(inputPaths: string[]): Promise<void> {
   exportButton.disabled = true;
   cancelRecognitionButton.disabled = false;
   progressLabel.textContent = "识别中…";
+  if (successDialog.open) {
+    successDialog.close();
+  }
   start.hidden = true;
   errorPanel.hidden = true;
-  workspace.hidden = true;
+  completion.hidden = true;
   resultSummary.hidden = true;
   resultActions.hidden = true;
   document.body.classList.remove("has-result");
@@ -204,9 +183,14 @@ async function recognizePaths(inputPaths: string[]): Promise<void> {
       inputPaths,
     });
     currentResult = result;
-    await appWindow.setSize(new LogicalSize(1080, 760));
-    api.load(base64ToBytes(result.gp5Base64), [0]);
+    await appWindow.setSize(new LogicalSize(760, 540));
     progressPanel.hidden = true;
+    document.body.classList.add("has-result");
+    renderRecognitionSummary(result.report);
+    completion.hidden = false;
+    resultActions.hidden = false;
+    exportButton.disabled = false;
+    showGenerationSuccess(result.report);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     progressPanel.hidden = true;
@@ -248,14 +232,14 @@ async function cancelRecognition(): Promise<void> {
 }
 
 async function exportGp(): Promise<void> {
-  if (!api.score) {
-    showError("没有可导出的曲谱");
+  if (!currentResult) {
+    showError("没有可导出的 GP5");
     return;
   }
 
-  const sourceName = currentResult?.displayName || "未命名曲谱";
+  const sourceName = currentResult.displayName || "未命名曲谱";
   const destination = await save({
-    defaultPath: `${sanitizeFileName(api.score.title || sourceName)}.gp5`,
+    defaultPath: `${sanitizeFileName(currentResult.report.title || sourceName)}.gp5`,
     filters: [{ name: "Guitar Pro 5", extensions: ["gp5"] }],
   });
   if (!destination) {
@@ -271,10 +255,39 @@ async function exportGp(): Promise<void> {
       destination,
       bytesBase64: currentResult.gp5Base64,
     });
+    showExportSuccess(destination);
   } catch (error) {
     showError(error instanceof Error ? error.message : String(error));
   } finally {
     exportButton.disabled = false;
+  }
+}
+
+function showGenerationSuccess(report: RecognitionResult["report"]): void {
+  const measureCount = report.measures ?? report.tabScore?.totals?.measures ?? 0;
+  const repeatText = report.repeats ? `，并恢复 ${report.repeats} 处反复` : "";
+  const warningCount = new Set([
+    ...(report.warnings ?? []),
+    ...(report.tabScore?.validation?.issues?.map((issue) => issue.message ?? "") ?? []),
+  ]).size;
+  successTitle.textContent = "GP5 已成功生成";
+  successMessage.textContent = measureCount
+    ? `已生成 ${measureCount} 小节的 GP5 文件${repeatText}，可以直接导出。${warningCount ? ` 另有 ${warningCount} 条识别提示，请在导出后核对。` : ""}`
+    : "GP5 文件已经生成，可以直接导出。";
+  successExportButton.hidden = false;
+  successCloseButton.textContent = "稍后导出";
+  if (!successDialog.open) {
+    successDialog.showModal();
+  }
+}
+
+function showExportSuccess(destination: string): void {
+  successTitle.textContent = "GP5 已成功保存";
+  successMessage.textContent = `文件已保存到 ${destination}`;
+  successExportButton.hidden = true;
+  successCloseButton.textContent = "完成";
+  if (!successDialog.open) {
+    successDialog.showModal();
   }
 }
 
@@ -293,6 +306,7 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
   const stats = [
     track?.strings ? `${track.strings} 弦` : "",
     report.measures ? `${report.measures} 小节` : "",
+    report.repeats ? `${report.repeats} 处反复` : "",
     report.tabScore?.totals?.systems
       ? `${report.tabScore.totals.systems} 谱表`
       : "",
@@ -419,15 +433,6 @@ function requiredElement<T extends HTMLElement = HTMLElement>(id: string): T {
 
 function requiredButton(id: string): HTMLButtonElement {
   return requiredElement<HTMLButtonElement>(id);
-}
-
-function base64ToBytes(base64: string): Uint8Array {
-  const binary = atob(base64);
-  const bytes = new Uint8Array(binary.length);
-  for (let index = 0; index < binary.length; index += 1) {
-    bytes[index] = binary.charCodeAt(index);
-  }
-  return bytes;
 }
 
 function sanitizeFileName(value: string): string {

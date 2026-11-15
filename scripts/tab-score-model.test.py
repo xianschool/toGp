@@ -301,5 +301,50 @@ class TabScoreModelTest(unittest.TestCase):
         self.assertEqual(system.bars, [28.3, 455.0, 545.7])
 
 
+    def test_guitar_pro_collapses_repeat_sign_gap_between_bars(self) -> None:
+        system = SimpleNamespace(
+            bars=[28.0, 185.0, 193.0, 327.0],
+            char_width=3.8,
+            events=[SimpleNamespace(x=50), SimpleNamespace(x=200)],
+            bar_numbers=[None, None, None],
+        )
+
+        RUNNER.collapse_guitar_pro_bar_signs(system)
+
+        self.assertEqual(system.bars, [28.0, 189.0, 327.0])
+        self.assertEqual(system.bar_numbers, [])
+
+    def test_guitar_pro_detects_forward_and_backward_repeat_lines(self) -> None:
+        def line(x, width):
+            return SimpleNamespace(
+                x0=x,
+                x1=x + width,
+                top=0,
+                bottom=17,
+            )
+
+        staff = [
+            SimpleNamespace(y=0, x0=20, x1=100),
+            SimpleNamespace(y=17, x0=20, x1=100),
+        ]
+        page = SimpleNamespace(
+            segments=[
+                line(40, 0.7),
+                line(42, 2.1),
+                line(44, 2.1),
+                line(47, 0.7),
+                line(75, 2.1),
+                line(78, 0.7),
+            ]
+        )
+
+        starts, ends, _ = RUNNER.guitar_pro_repeat_signs(page, staff, 4.25)
+
+        self.assertEqual(len(ends), 1)
+        self.assertAlmostEqual(ends[0], 43.95)
+        self.assertEqual(len(starts), 2)
+        self.assertAlmostEqual(starts[-1], 77.2)
+
+
 if __name__ == "__main__":
     unittest.main()

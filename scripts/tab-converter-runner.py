@@ -223,6 +223,140 @@ def transfer_guitar_pro_rhythm(systems: list) -> list:
     return systems
 
 
+def collapse_guitar_pro_bar_signs(system) -> None:
+    if len(system.bars) < 2:
+        return
+    collapsed = [system.bars[0]]
+    for boundary in system.bars[1:]:
+        previous = collapsed[-1]
+        has_events = any(previous <= event.x < boundary for event in system.events)
+        if boundary - previous < 5 * system.char_width and not has_events:
+            collapsed[-1] = (previous + boundary) / 2
+        else:
+            collapsed.append(boundary)
+    system.bars = collapsed
+    if system.bar_numbers and len(system.bar_numbers) != len(collapsed) - 1:
+        system.bar_numbers = []
+
+
+def guitar_pro_repeat_signs(page, staff, spacing: float) -> tuple[list[float], list[float], list[float]]:
+    top, bottom = staff[0].y, staff[-1].y
+    x0, x1 = staff[0].x0, staff[-1].x1
+    lines = sorted(
+        (
+            segment
+            for segment in page.segments
+            if segment.bottom - segment.top > 5 * (segment.x1 - segment.x0 + 0.1)
+            and x0 <= segment.x0 <= x1
+            and abs(segment.top - top) <= 0.5 * spacing
+            and abs(segment.bottom - bottom) <= 0.5 * spacing
+            and segment.x1 - segment.x0 <= 4
+        ),
+        key=lambda segment: segment.x0,
+    )
+    clusters = []
+    for line in lines:
+        center = (line.x0 + line.x1) / 2
+        if clusters and center - clusters[-1][-1][0] <= 1.2 * spacing:
+            clusters[-1].append((center, line.x1 - line.x0))
+        else:
+            clusters.append([(center, line.x1 - line.x0)])
+    starts = []
+    ends = []
+    double_bars = []
+    for cluster in clusters:
+        if len(cluster) < 2:
+            continue
+        center = sum(x for x, _ in cluster) / len(cluster)
+        if not any(width >= 1.5 for _, width in cluster):
+            if len(cluster) == 2 and all(width < 1 for _, width in cluster):
+                double_bars.append(center)
+            continue
+        first_width = cluster[0][1]
+        last_width = cluster[-1][1]
+        if first_width < 1 and last_width < 1:
+            starts.append(center)
+            ends.append(center)
+        elif first_width < 1:
+            ends.append(center)
+        elif last_width < 1:
+            starts.append(center)
+    return starts, ends, double_bars
+
+
+def guitar_pro_voltas(page, tab_systems: list, spacing: float) -> None:
+    labels = []
+    chars = sorted(page.chars, key=lambda char: (char.top, char.x0))
+    for first in chars:
+        if first.text not in {"1", "2"} or first.bottom - first.top < 7:
+            continue
+        dot = next(
+            (
+                char
+                for char in chars
+                if char.text == "."
+                and abs(char.top - first.top) <= 0.5 * (first.bottom - first.top)
+                and first.x1 <= char.x0 <= first.x1 + 1.5 * spacing
+            ),
+            None,
+        )
+        if dot is None:
+            continue
+        bracket = next(
+            (
+                segment
+                for segment in page.segments
+                if segment.is_horizontal
+                and abs(segment.top - first.top) <= 2 * spacing
+                and first.x0 - 1.5 * spacing <= segment.x0 <= first.x0 + 0.5 * spacing
+                and segment.x1 - segment.x0 >= 2 * spacing
+            ),
+            None,
+        )
+        if bracket is not None:
+            labels.append((bracket.x0, bracket.x1, int(first.text), first.top))
+    for x0, x1, passes, label_top in labels:
+        owner = min(
+            tab_systems,
+            key=lambda item: abs(item[2][0].y - label_top),
+            default=None,
+        )
+        if owner is not None:
+            system = owner[0]
+            brackets = (
+                min(system.bars, key=lambda boundary: abs(boundary - x0)),
+                min(system.bars, key=lambda boundary: abs(boundary - x1)),
+            )
+            system.endings.append((brackets[0], brackets[1], (passes,)))
+
+
+def apply_guitar_pro_repeats(page, tab_systems: list, spacing: float) -> None:
+    for system, _, notation_staff in tab_systems:
+        collapse_guitar_pro_bar_signs(system)
+        starts, ends, double_bars = guitar_pro_repeat_signs(page, notation_staff, spacing)
+        for double_bar in double_bars:
+            if any(start < double_bar for start in starts) and not any(
+                start < end <= double_bar for start in starts for end in ends
+            ):
+                ends.append(double_bar)
+        system.repeat_starts = sorted(
+            {
+                min(system.bars, key=lambda boundary: abs(boundary - x))
+                for x in starts
+            }
+        )
+        system.repeat_ends = sorted(
+            {
+                min(system.bars, key=lambda boundary: abs(boundary - x))
+                for x in ends
+            }
+        )
+        for boundary in list(system.repeat_ends):
+            system.repeat_ends.remove(boundary)
+            system.repeat_ends.append((boundary, 2))
+        system.repeat_ends.sort(key=lambda item: item[0])
+
+
 def trim_guitar_pro_margins(systems: list) -> list:
     for system in systems:
         if (
@@ -476,11 +610,12 @@ def patch_tab_reader() -> None:
                 system.lyrics = [
                     lyric for lyric in system.lyrics if lyric[1] not in ignored_lyrics
                 ]
+            all_staves = list(
+                engraved._staves(engraved._staff_lines(page.segments, page.width))
+            )
             staves = [
                 staff
-                for staff in engraved._staves(
-                    engraved._staff_lines(page.segments, page.width)
-                )
+                for staff in all_staves
                 if len(staff) == 6
                 and (
                     ACTIVE_TAB_PROFILE != "guitar-pro-vector-tab"
@@ -489,11 +624,23 @@ def patch_tab_reader() -> None:
                     >= 0.55 * page.width
                 )
             ]
-            tab_systems = [
-                (system, staff)
-                for system, staff in zip(systems, staves, strict=False)
-                if system.string_count == 6
-            ]
+            six_systems = [system for system in systems if system.string_count == 6]
+            tab_systems = list(zip(six_systems, staves, strict=False))
+            if ACTIVE_TAB_PROFILE == "guitar-pro-vector-tab" and tab_systems:
+                notation_staves = [
+                    staff
+                    for staff in all_staves
+                    if len(staff) == 5
+                    and max(line.x1 for line in staff) - min(line.x0 for line in staff)
+                    >= 0.55 * page.width
+                ]
+                paired = list(zip(six_systems, staves, notation_staves, strict=False))
+                if paired:
+                    notation_spacing = (
+                        paired[0][2][-1].y - paired[0][2][0].y
+                    ) / (len(paired[0][2]) - 1)
+                    guitar_pro_voltas(page, paired, notation_spacing)
+                    apply_guitar_pro_repeats(page, paired, notation_spacing)
             if tab_systems:
                 captured_pages[page.number] = {
                     "width": page.width,

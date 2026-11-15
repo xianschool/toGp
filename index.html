@@ -48,14 +48,30 @@
           </details>
         </section>
 
-        <section id="workspace" class="workspace" hidden>
-          <div id="alphaTab"></div>
+        <section id="completion" class="completion" aria-live="polite" hidden>
+          <div class="completion-card">
+            <p class="completion-kicker">识别完成</p>
+            <h2>GP5 已生成</h2>
+            <p>曲谱已在本地转换完成。点击右上角“导出 GP5”保存文件；如需修改音符或节奏，可在 Guitar Pro 中继续编辑。</p>
+          </div>
         </section>
       </main>
 
       <div id="drop-overlay" class="drop-overlay" aria-hidden="true" hidden>
         <span>松开以识别曲谱</span>
       </div>
+
+      <dialog id="success-dialog" class="success-dialog" aria-labelledby="success-title">
+        <div class="success-card">
+          <p class="success-kicker">toGp</p>
+          <h2 id="success-title">GP5 已成功生成</h2>
+          <p id="success-message"></p>
+          <div class="success-actions">
+            <button id="success-close" class="button button-muted" type="button">稍后导出</button>
+            <button id="success-export" class="button button-primary" type="button">导出 GP5</button>
+          </div>
+        </div>
+      </dialog>
 
       <dialog id="about-dialog" class="about-dialog" aria-labelledby="about-title">
         <div class="about-card">
