@@ -372,6 +372,9 @@ function profileLabel(profile: string | undefined): string {
   if (profile === "red-chord-tab") {
     return "红色和弦数字谱";
   }
+  if (profile === "musescore-vector-tab") {
+    return "MuseScore 矢量六线谱";
+  }
   if (profile === "generic") {
     return "通用识别";
   }

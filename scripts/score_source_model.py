@@ -104,8 +104,21 @@ def pdf_source_candidates(
                 ["semantic text/vector structure without a known software signature"],
             )
         )
-    candidates.sort(key=lambda item: item["confidence"], reverse=True)
-    return candidates
+    combined = {}
+    for item in candidates:
+        current = combined.get(item["family"])
+        if current is None:
+            combined[item["family"]] = item
+            continue
+        current["confidence"] = max(current["confidence"], item["confidence"])
+        current["evidence"] = list(
+            dict.fromkeys(current["evidence"] + item["evidence"])
+        )
+    return sorted(
+        combined.values(),
+        key=lambda item: item["confidence"],
+        reverse=True,
+    )
 
 
 def inspect_pdf(path: Path) -> dict:

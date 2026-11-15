@@ -166,5 +166,50 @@ class TabScoreModelTest(unittest.TestCase):
         self.assertEqual(adapter["sourceFamily"], "digital-tab-screenshot")
 
 
+    def test_pdf_text_runs_separate_track_label_from_title(self) -> None:
+        rows = RUNNER.pdf_text_runs(
+            [
+                {"x0": 40, "x1": 80, "top": 42, "size": 14, "text": "Guitar"},
+                {
+                    "x0": 146,
+                    "x1": 449,
+                    "top": 42,
+                    "size": 22,
+                    "text": "Boundless Oceans, Vast Skies",
+                },
+            ]
+        )
+        artist_rows = RUNNER.pdf_text_runs(
+            [{"x0": 274, "x1": 321, "top": 70, "size": 14, "text": "Beyond"}]
+        )
+
+        self.assertEqual([row["text"] for row in rows], [
+            "Guitar",
+            "Boundless Oceans, Vast Skies",
+        ])
+        self.assertEqual(rows[1]["size"], 22)
+        self.assertEqual(artist_rows[0]["text"], "Beyond")
+
+    def test_musescore_vector_pdf_selects_musescore_adapter(self) -> None:
+        adapter = RUNNER.select_tab_adapter(
+            {
+                "renderType": "vector-text",
+                "sourceCandidates": [
+                    {"family": "musescore", "confidence": 0.98}
+                ],
+                "features": {"imageFiles": 0, "pdfFiles": 1},
+                "files": [
+                    {
+                        "kind": "pdf",
+                        "renderType": "vector-text",
+                    }
+                ],
+            }
+        )
+
+        self.assertEqual(adapter["id"], "musescore-vector-tab")
+        self.assertEqual(adapter["sourceFamily"], "musescore")
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -31,6 +31,10 @@ TAB_ADAPTERS = {
         "displayName": "红色和弦数字谱",
         "description": "按红色和弦标签和和弦图定位，并将六线谱 X 转换为当前和弦品位。",
     },
+    "musescore-vector-tab": {
+        "displayName": "MuseScore 矢量六线谱",
+        "description": "使用 MuseScore 的文本对象、Leland/Edwin 字体和矢量谱表结构。",
+    },
 }
 CHORD_NAME = re.compile(
     r"^[A-G][#b]?(?:m|maj|min|sus|add|dim|aug|\u00b0)?\d*(?:[-+]\d+)?"
@@ -58,6 +62,36 @@ def emit(payload: dict) -> None:
     sys.stdout.write("\n")
 
 
+def pdf_text_runs(chars: list[dict], split_gap: float = 12.0) -> list[dict]:
+    items = sorted(chars, key=lambda char: char["x0"])
+    runs = []
+    for char in items:
+        if not runs or char["x0"] - runs[-1][-1]["x1"] > split_gap:
+            runs.append([char])
+        else:
+            runs[-1].append(char)
+    result = []
+    for run in runs:
+        text = ""
+        for index, char in enumerate(run):
+            if index and char["x0"] - run[index - 1]["x1"] > 1.5:
+                text += " "
+            text += str(char["text"])
+        text = unicodedata.normalize("NFKC", text).replace("\t", " ").strip()
+        if not text:
+            continue
+        result.append(
+            {
+                "top": float(min(char["top"] for char in run)),
+                "x0": float(run[0]["x0"]),
+                "x1": float(run[-1]["x1"]),
+                "size": float(max(char["size"] for char in run)),
+                "text": text,
+            }
+        )
+    return result
+
+
 def extract_pdf_metadata(data: bytes) -> tuple[str, str]:
     import pdfplumber
 
@@ -68,17 +102,9 @@ def extract_pdf_metadata(data: bytes) -> tuple[str, str]:
             chars = sorted(page.chars, key=lambda char: (char["top"], char["x0"]))
             for key, group in itertools.groupby(chars, key=lambda char: round(char["top"] / 5) * 5):
                 items = list(group)
-                text = "".join(item["text"] for item in items).strip()
-                if not text:
-                    continue
-                rows.append(
-                    {
-                        "top": float(key),
-                        "x0": float(min(item["x0"] for item in items)),
-                        "size": float(max(item["size"] for item in items)),
-                        "text": unicodedata.normalize("NFKC", text),
-                    }
-                )
+                for row in pdf_text_runs(items):
+                    row["top"] = float(key)
+                    rows.append(row)
             if not rows:
                 return "", ""
             title_row = max(
@@ -93,7 +119,8 @@ def extract_pdf_metadata(data: bytes) -> tuple[str, str]:
                 row
                 for row in rows
                 if title_row["top"] < row["top"] <= title_row["top"] + 3 * title_row["size"]
-                and row["x0"] < page.width * 0.25
+                and abs(((row["x0"] + row["x1"]) / 2) - page.width / 2)
+                < page.width * 0.25
                 and 2 <= len(row["text"]) <= 30
                 and not row["text"].startswith("=")
                 and row["size"] < title_row["size"]
@@ -635,6 +662,17 @@ def select_tab_adapter(source_diagnosis: dict) -> dict:
     all_inputs_are_images = features.get("imageFiles", len(images)) == len(files)
     selected = "generic"
     reason = "当前输入没有匹配到专用版面适配器，使用通用回退。"
+    candidates = source_diagnosis.get("sourceCandidates", [])
+    top_candidate = candidates[0] if candidates else None
+    vector_pdfs = (
+        has_pdfs
+        and not images
+        and all(
+            item.get("renderType") in {"vector-text", "vector-outline"}
+            for item in files
+            if item.get("kind") == "pdf" and not item.get("error")
+        )
+    )
     raster_images = all(
         str(item.get("renderType") or "").startswith("digital-raster")
         for item in images
@@ -659,8 +697,14 @@ def select_tab_adapter(source_diagnosis: dict) -> dict:
     ):
         selected = "monochrome-watermark-tab"
         reason = "所有页面均具有浅色单色谱线和数字渲染背景，启用黑白水印适配。"
-    candidates = source_diagnosis.get("sourceCandidates", [])
-    top_candidate = candidates[0] if candidates else None
+    elif (
+        vector_pdfs
+        and top_candidate
+        and top_candidate.get("family") == "musescore"
+        and top_candidate.get("confidence", 0) >= 0.7
+    ):
+        selected = "musescore-vector-tab"
+        reason = "检测到 MuseScore 元数据或 Leland/Edwin 字体，启用 MuseScore 矢量文本适配。"
     return {
         "id": selected,
         "displayName": TAB_ADAPTERS[selected]["displayName"],

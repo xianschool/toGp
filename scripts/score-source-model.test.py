@@ -22,7 +22,9 @@ class ScoreSourceModelTest(unittest.TestCase):
 
         self.assertEqual(candidates[0]["family"], "musescore")
         self.assertEqual(candidates[0]["confidence"], 0.98)
-        self.assertIn("metadata", candidates[0]["evidence"][0])
+        self.assertEqual(len(candidates), 1)
+        self.assertTrue(any("metadata" in item for item in candidates[0]["evidence"]))
+        self.assertTrue(any("font" in item for item in candidates[0]["evidence"]))
 
     def test_red_chord_image_selects_digital_tab_profile(self) -> None:
         result = model.image_classification(
