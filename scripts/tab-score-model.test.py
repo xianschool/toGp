@@ -137,7 +137,7 @@ class TabScoreModelTest(unittest.TestCase):
         self.assertEqual(adapter["id"], "monochrome-watermark-tab")
         self.assertEqual(adapter["displayName"], "黑白水印六线谱")
 
-    def test_red_chord_pages_use_generic_fallback(self) -> None:
+    def test_red_chord_pages_select_chord_adapter(self) -> None:
         adapter = RUNNER.select_tab_adapter(
             {
                 "renderType": "digital-raster-tab",
@@ -147,16 +147,22 @@ class TabScoreModelTest(unittest.TestCase):
                         "confidence": 0.75,
                     }
                 ],
+                "features": {
+                    "imageFiles": 1,
+                    "pdfFiles": 0,
+                    "redChordImages": 1,
+                },
                 "files": [
                     {
                         "kind": "image",
+                        "renderType": "digital-raster-tab",
                         "visualProfile": "red-chord-tab",
                     }
                 ],
             }
         )
 
-        self.assertEqual(adapter["id"], "generic")
+        self.assertEqual(adapter["id"], "red-chord-tab")
         self.assertEqual(adapter["sourceFamily"], "digital-tab-screenshot")
 
 

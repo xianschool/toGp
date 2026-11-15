@@ -27,6 +27,10 @@ TAB_ADAPTERS = {
         "displayName": "黑白水印六线谱",
         "description": "补充浅色系统弦线，并修正水印打印版的三小节系统。",
     },
+    "red-chord-tab": {
+        "displayName": "红色和弦数字谱",
+        "description": "按红色和弦标签和和弦图定位，并将六线谱 X 转换为当前和弦品位。",
+    },
 }
 CHORD_NAME = re.compile(
     r"^[A-G][#b]?(?:m|maj|min|sus|add|dim|aug|\u00b0)?\d*(?:[-+]\d+)?"
@@ -631,7 +635,20 @@ def select_tab_adapter(source_diagnosis: dict) -> dict:
     all_inputs_are_images = features.get("imageFiles", len(images)) == len(files)
     selected = "generic"
     reason = "当前输入没有匹配到专用版面适配器，使用通用回退。"
+    raster_images = all(
+        str(item.get("renderType") or "").startswith("digital-raster")
+        for item in images
+    )
     if (
+        images
+        and all_inputs_are_images
+        and not has_pdfs
+        and raster_images
+        and features.get("redChordImages", 0) > 0
+    ):
+        selected = "red-chord-tab"
+        reason = "检测到数字谱中的红色和弦标签，启用和弦图与 X 占位符映射。"
+    elif (
         images
         and all_inputs_are_images
         and not has_pdfs
@@ -981,6 +998,7 @@ def build_tab_score(
             "timedLyrics": report.get("timed_lyrics", []),
         },
         "chords": report.get("chords", []),
+        "chordAnalysis": report.get("chord_analysis", {}),
         "totals": {
             "pages": len(page_numbers),
             "systems": len(all_systems),
@@ -1006,6 +1024,7 @@ def normalize_report_aliases(report: dict) -> None:
         ("timed_lyrics", "timedLyrics"),
         ("source_diagnosis", "sourceDiagnosis"),
         ("source_adapter", "sourceAdapter"),
+        ("chord_analysis", "chordAnalysis"),
     ):
         if snake_case in report and camel_case not in report:
             report[camel_case] = report[snake_case]
@@ -1016,13 +1035,20 @@ def add_chords_to_gp5(
     captured_pages: dict,
     images: list[Path],
     metadata: dict | None = None,
-) -> tuple[bytes, list[dict]]:
+) -> tuple[bytes, list[dict], dict]:
     import guitarpro as gp
     from pdf_to_gp5.gp5_writer import sanitize_text
 
+    analysis = {
+        "pages": len(images),
+        "labels": 0,
+        "assignedLabels": 0,
+        "unmatchedLabels": 0,
+        "convertedNotes": 0,
+    }
     song = gp.parse(io.BytesIO(gp5))
     if not song.tracks:
-        return gp5, []
+        return gp5, [], analysis
     track = song.tracks[0]
     metadata = metadata or {}
     song.title = sanitize_text(str(metadata.get("title") or song.title))
@@ -1067,6 +1093,9 @@ def add_chords_to_gp5(
                 assigned[min(candidates)[1]].append(label)
             else:
                 unmatched.append(label)
+        analysis["labels"] += len(labels)
+        analysis["assignedLabels"] += sum(len(items) for items in assigned)
+        analysis["unmatchedLabels"] += len(unmatched)
 
         for index, system in enumerate(systems):
             bars = system["bars"]
@@ -1115,11 +1144,12 @@ def add_chords_to_gp5(
                                     continue
                                 note.type = gp.NoteType.normal
                                 note.value = active_shape.get(note.string, 0)
+                                analysis["convertedNotes"] += 1
             measure_offset += max(0, len(bars) - 1)
 
     buffer = io.BytesIO()
     gp.write(song, buffer, version=(5, 1, 0))
-    return buffer.getvalue(), markers
+    return buffer.getvalue(), markers, analysis
 
 
 def normalize_image(opened, width: int, height: int):
@@ -1247,7 +1277,7 @@ def run(job_path: Path, output_path: Path) -> None:
     )
     result = convert_many(documents, options)
     if images and not pdfs:
-        gp5, chords = add_chords_to_gp5(
+        gp5, chords, chord_analysis = add_chords_to_gp5(
             result.gp5,
             captured_pages,
             images,
@@ -1255,6 +1285,16 @@ def run(job_path: Path, output_path: Path) -> None:
         )
         result.gp5 = gp5
         result.report["chords"] = chords
+        result.report["chord_analysis"] = chord_analysis
+        if chord_analysis["unmatchedLabels"]:
+            result.report.setdefault("warnings", []).append(
+                f"有 {chord_analysis['unmatchedLabels']} 个红色和弦标签无法关联到谱表，"
+                "对应位置的 X 可能保留了原有含义。"
+            )
+        if ACTIVE_TAB_PROFILE == "red-chord-tab" and chord_analysis["labels"] == 0:
+            result.report.setdefault("warnings", []).append(
+                "检测到红色和弦谱样式，但没有定位到可用的和弦标签，请核对含 X 的音符。"
+            )
     result.report["capo"] = detected_metadata.get("capo", 0)
     result.report["source_profile"] = ACTIVE_TAB_PROFILE
     result.report["source_diagnosis"] = source_diagnosis

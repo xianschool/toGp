@@ -30,6 +30,12 @@ interface RecognitionResult {
         confidence?: number;
       }>;
     };
+    chordAnalysis?: {
+      labels?: number;
+      assignedLabels?: number;
+      unmatchedLabels?: number;
+      convertedNotes?: number;
+    };
     tabScore?: {
       source?: {
         renderType?: string;
@@ -292,6 +298,10 @@ function renderRecognitionSummary(report: RecognitionResult["report"] | undefine
       : "",
     report.tempo ? `${report.tempo} BPM` : "",
     report.capo ? `Capo ${report.capo}` : "",
+    report.chordAnalysis?.labels ? `${report.chordAnalysis.labels} 个和弦` : "",
+    report.chordAnalysis?.convertedNotes
+      ? `${report.chordAnalysis.convertedNotes} 个 X 已补品位`
+      : "",
     adapterLabel(report),
     sourceFamilyLabel(report),
   ].filter(Boolean);
@@ -358,6 +368,9 @@ function sourceFamilyLabel(report: RecognitionResult["report"]): string {
 function profileLabel(profile: string | undefined): string {
   if (profile === "monochrome-watermark-tab") {
     return "黑白水印六线谱";
+  }
+  if (profile === "red-chord-tab") {
+    return "红色和弦数字谱";
   }
   if (profile === "generic") {
     return "通用识别";
