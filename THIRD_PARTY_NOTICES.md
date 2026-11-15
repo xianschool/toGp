@@ -9,22 +9,12 @@ toGp includes and uses the following third-party software.
 - License: MIT
 - Use: tablature extraction, rhythm reconstruction, and Guitar Pro 5 serialization
 
-## alphaTab 1.9.0
+## Audiveris (optional legacy component)
 
-- Project: https://github.com/CoderLine/alphaTab
-- License: Mozilla Public License 2.0
-- Use: score rendering and Guitar Pro 5 `.gp5` import
-
-## Bravura music font
-
-- Copyright Steinberg Media Technologies
-- License: SIL Open Font License 1.1
-- License texts are generated under `public/font/` and included in the application bundle.
-
-## SONiVOX soundfont
-
-- License: Apache License 2.0
-- License text is generated under `public/soundfont/` and included in the application bundle.
+- Project: https://github.com/Audiveris/audiveris
+- Version: 5.11.0
+- License: GNU Affero General Public License v3.0
+- Use: optional legacy MusicXML recognition workflow; the current tablature converter does not require it.
 
 ## Python and OCR runtime
 

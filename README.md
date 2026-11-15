@@ -92,11 +92,15 @@ The command prints source diagnosis, adapter selection, TabScore totals, rhythm 
 
 ## Privacy and local security
 
-- The selected file is copied into a private temporary directory.
+- The selected score is read directly from its chosen path by an isolated local converter process.
 - The tablature converter runs as a separate local process without an HTTP server.
 - The temporary recognition directory is deleted after success or failure.
 - The application has no HTTP API and does not collect telemetry.
-- GP5 parsing and preview happen inside the Tauri WebView.
+- GP5 bytes stay on the user's Mac and are written only to the destination chosen in the save dialog.
+
+## Contributing and security
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull-request guidance, and [SECURITY.md](SECURITY.md) for vulnerability reporting. Never attach copyrighted or private score files to a public issue.
 
 ## Licensing
 

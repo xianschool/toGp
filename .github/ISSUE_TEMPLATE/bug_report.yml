@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a reproducible problem with recognition, export, or the macOS app.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not upload copyrighted or private score files. Use a synthetic example or describe the layout instead.
+  - type: input
+    id: version
+    attributes:
+      label: toGp version or commit
+      placeholder: 0.1.0 or commit SHA
+    validations:
+      required: true
+  - type: input
+    id: source
+    attributes:
+      label: Score source
+      description: Guitar Pro, MuseScore, website screenshot, scanned publication, or unknown.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Reproduction steps
+      placeholder: Describe the exact steps without attaching a non-redistributable score.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include warnings, measure or note counts, and relevant logs. Remove private paths and credentials.
+    validations:
+      required: true

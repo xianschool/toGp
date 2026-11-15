@@ -10,3 +10,11 @@ public/font/
 public/soundfont/
 *.log
 .DS_Store
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+.idea/
+.vscode/
