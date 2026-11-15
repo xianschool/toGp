@@ -17,7 +17,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "5.11.0";
-const PREPARED_REVISION = `${VERSION}-r2`;
+const PREPARED_REVISION = `${VERSION}-r3`;
 const FILE_NAME = `Audiveris-${VERSION}-macosx-arm64.dmg`;
 const EXPECTED_SHA256 =
   "17491af8b6d40153b031dd1f0815e37213f0999ef23f10586af46706e59b2eb6";
@@ -38,6 +38,7 @@ const archivePath = path.join(root, "src-tauri/resources/audiveris-runtime.zip")
 const legalDestination = path.join(root, "src-tauri/resources/legal");
 const tessdataDestination = path.join(root, "src-tauri/resources/tessdata");
 const markerPath = path.join(destination, ".prepared-version");
+const entitlementsPath = path.join(root, "src-tauri/Audiveris.entitlements");
 
 if (process.platform !== "darwin" || process.arch !== "arm64") {
   throw new Error("This release only prepares the macOS Apple Silicon Audiveris component.");
@@ -124,18 +125,24 @@ try {
   );
   await makeTreeReadable(destinationApp);
 
-  execFileSync(
-    "codesign",
-    [
-      "--force",
-      "--deep",
-      "--sign",
-      "-",
-      "--preserve-metadata=identifier,entitlements",
-      destinationApp,
-    ],
-    { stdio: "inherit" },
-  );
+  const identity = findDeveloperIdIdentity();
+  const signingArguments = [
+    "--force",
+    "--deep",
+    "--sign",
+    identity ?? "-",
+    "--preserve-metadata=identifier",
+  ];
+  if (identity) {
+    signingArguments.push(
+      "--options",
+      "runtime",
+      "--timestamp",
+      "--entitlements",
+      entitlementsPath,
+    );
+  }
+  execFileSync("codesign", [...signingArguments, destinationApp], { stdio: "inherit" });
   execFileSync("codesign", ["--verify", "--deep", "--strict", destinationApp], {
     stdio: "inherit",
   });
@@ -215,4 +222,19 @@ async function makeTreeReadable(directory) {
       await chmod(fullPath, current.mode & 0o111 ? 0o755 : 0o644);
     }
   }
+}
+
+function findDeveloperIdIdentity() {
+  if (process.env.APPLE_SIGNING_IDENTITY) {
+    return process.env.APPLE_SIGNING_IDENTITY;
+  }
+
+  const output = execFileSync("security", ["find-identity", "-v", "-p", "codesigning"], {
+    encoding: "utf8",
+  });
+  const identities = [...output.matchAll(/"([^"]*Developer ID Application: [^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  const teamId = process.env.APPLE_TEAM_ID;
+  return identities.find((identity) => !teamId || identity.endsWith(`(${teamId})`));
 }

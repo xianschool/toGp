@@ -16,6 +16,30 @@ Multiple files can be selected in one operation. toGp sorts their file names nat
 
 Audiveris works best with clear printed scores. Handwritten music, strongly distorted photos, and complex layouts may still need correction in the Audiveris editor.
 
+## macOS distribution
+
+Public builds require a `Developer ID Application` certificate and Apple notarization. Store notarization credentials in the macOS Keychain once:
+
+```bash
+xcrun notarytool store-credentials "togp-notary" \
+  --apple-id "your-apple-id@example.com" \
+  --team-id "YOUR_TEAM_ID"
+```
+
+The command prompts for an app-specific password; do not put that password in the repository or in build scripts.
+
+Then run the normal packaging command:
+
+```bash
+npm run desktop:build
+```
+
+The script signs the app, embedded Audiveris runtime, and DMG, submits the DMG to Apple, attaches the notarization ticket, and verifies it with Gatekeeper. For a local signing-only build, use:
+
+```bash
+SKIP_NOTARIZATION=1 npm run desktop:build
+```
+
 ## Development
 
 Requirements:
