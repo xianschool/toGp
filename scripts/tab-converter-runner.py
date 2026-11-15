@@ -11,6 +11,7 @@ import traceback
 import unicodedata
 from bisect import bisect_left, bisect_right
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 from score_source_model import aggregate_source_diagnosis, inspect_score_source
@@ -136,6 +137,102 @@ def extract_pdf_metadata(data: bytes) -> tuple[str, str]:
             return title, artist
     except Exception:
         return "", ""
+
+
+def guitar_pro_rhythm_marks(page, top, bottom, x0, x1, spacing):
+    import pdf_to_gp5.extract.rhythm_marks as rhythm_marks
+    from pdf_to_gp5.extract.rhythm_marks import read_rhythm
+
+    original_stems = rhythm_marks._stems
+    original_beams = rhythm_marks._beam_shapes
+    original_is_digit = rhythm_marks.is_digit
+
+    def stems(_, top, bottom, x0, x1, spacing):
+        found = []
+        for segment in page.segments:
+            length = segment.bottom - segment.top
+            if (
+                not segment.is_vertical
+                or not (x0 < segment.x0 < x1)
+                or not (0.5 * spacing <= length <= 10.5 * spacing)
+            ):
+                continue
+            if (
+                segment.bottom <= top + 0.2 * spacing
+                or segment.top >= bottom - 0.2 * spacing
+            ):
+                continue
+            if (
+                segment.top <= top + 0.4 * spacing
+                and segment.bottom >= bottom - 0.4 * spacing
+                and length <= 4.2 * spacing
+            ):
+                continue
+            found.append(segment)
+        return found, False
+
+    def beams(_, spacing):
+        return [
+            segment
+            for segment in [*page.curves, *page.segments]
+            if 2 * spacing <= segment.x1 - segment.x0 <= 0.15 * page.width
+            and segment.bottom - segment.top <= 2.5 * spacing
+        ]
+
+    try:
+        rhythm_marks._stems = stems
+        rhythm_marks._beam_shapes = beams
+        rhythm_marks.is_digit = lambda _: False
+        return read_rhythm(page, top, bottom, x0, x1, spacing)
+    finally:
+        rhythm_marks._stems = original_stems
+        rhythm_marks._beam_shapes = original_beams
+        rhythm_marks.is_digit = original_is_digit
+
+
+def transfer_guitar_pro_rhythm(systems: list) -> list:
+    for index, system in enumerate(systems):
+        if system.string_count != 6 or index == 0:
+            continue
+        notation = systems[index - 1]
+        if (
+            notation.string_count != 5
+            or abs(notation.start_x - system.start_x) > system.char_width
+            or abs(notation.end_x - system.end_x) > system.char_width
+            or not notation.rhythm
+        ):
+            continue
+        columns = []
+        for event in sorted(system.events, key=lambda event: event.x):
+            if not columns or event.x - columns[-1] > 0.6 * system.char_width:
+                columns.append(event.x)
+        aligned = []
+        for mark in notation.rhythm:
+            if mark.units is None:
+                continue
+            if mark.is_rest:
+                aligned.append(replace(mark))
+                continue
+            nearest = min(columns, key=lambda column: abs(column - mark.x), default=None)
+            if nearest is not None and abs(nearest - mark.x) <= 1.2 * system.char_width:
+                aligned.append(replace(mark, x=nearest))
+            else:
+                aligned.append(replace(mark))
+        if aligned:
+            system.rhythm = sorted(aligned, key=lambda mark: mark.x)
+    return systems
+
+
+def trim_guitar_pro_margins(systems: list) -> list:
+    for system in systems:
+        if (
+            system.string_count == 6
+            and len(system.bars) >= 2
+            and system.bars[-1] - system.bars[-2] < 2.5 * system.char_width
+            and not any(system.bars[-2] <= event.x < system.bars[-1] for event in system.events)
+        ):
+            system.bars = system.bars[:-1]
+    return systems
 
 
 def filter_adapter_systems(systems: list, page_width: float, profile: str) -> list:
@@ -309,9 +406,18 @@ def patch_tab_reader() -> None:
                 labels.append((line.chars[0].x0, text))
         return labels
 
+    original_read_rhythm = engraved.read_rhythm
     original_extract = converter.extract_engraved_systems
     original_shared_bars = engraved.shared_bars
     captured_pages = {}
+
+    def page_rhythm(page, top, bottom, x0, x1, spacing):
+        if (
+            ACTIVE_TAB_PROFILE == "guitar-pro-vector-tab"
+            and bottom - top <= 4.3 * spacing
+        ):
+            return guitar_pro_rhythm_marks(page, top, bottom, x0, x1, spacing)
+        return original_read_rhythm(page, top, bottom, x0, x1, spacing)
 
     def extract_engraved_systems(page):
         nonlocal prefer_rectangular_bar_lines
@@ -324,8 +430,12 @@ def patch_tab_reader() -> None:
         previous = prefer_rectangular_bar_lines
         prefer_rectangular_bar_lines = rectangular >= 4
         try:
+            systems = original_extract(page)
+            if ACTIVE_TAB_PROFILE == "guitar-pro-vector-tab":
+                systems = transfer_guitar_pro_rhythm(systems)
+                systems = trim_guitar_pro_margins(systems)
             systems = filter_adapter_systems(
-                original_extract(page),
+                systems,
                 page.width,
                 ACTIVE_TAB_PROFILE,
             )
@@ -401,6 +511,7 @@ def patch_tab_reader() -> None:
             prefer_rectangular_bar_lines = previous
 
     engraved._staff_lines = staff_lines
+    engraved.read_rhythm = page_rhythm
     raster._find_staves = find_staves
     engraved.section_labels = section_labels
     engraved.shared_bars = lambda groups, tolerance: original_shared_bars(groups, tolerance * 2.5)

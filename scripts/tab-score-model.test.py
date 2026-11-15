@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import unittest
+from dataclasses import dataclass
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -13,6 +14,15 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError("Unable to load tab converter runner")
 RUNNER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RUNNER)
+
+
+@dataclass(frozen=True)
+class RhythmMark:
+    x: float
+    units: int | None
+    tuplet: bool = False
+    is_rest: bool = False
+    vibrato: bool = False
 
 
 def score_with(measures: int = 2, systems: list[dict] | None = None) -> dict:
@@ -246,6 +256,49 @@ class TabScoreModelTest(unittest.TestCase):
 
         self.assertEqual(adapter["id"], "guitar-pro-vector-tab")
         self.assertEqual(adapter["sourceFamily"], "guitar-pro")
+
+
+    def test_guitar_pro_rhythm_is_aligned_to_tab_columns(self) -> None:
+        notation = SimpleNamespace(
+            string_count=5,
+            start_x=28.3,
+            end_x=566.9,
+            rhythm=[
+                RhythmMark(x=81.3, units=4),
+                RhythmMark(x=89.9, units=2),
+                RhythmMark(x=300.0, units=1),
+            ],
+        )
+        tab = SimpleNamespace(
+            string_count=6,
+            start_x=28.3,
+            end_x=566.9,
+            char_width=3.8,
+            rhythm=[],
+            events=[
+                SimpleNamespace(x=65.2),
+                SimpleNamespace(x=78.8),
+                SimpleNamespace(x=92.4),
+            ],
+        )
+
+        RUNNER.transfer_guitar_pro_rhythm([notation, tab])
+
+        self.assertEqual([mark.x for mark in tab.rhythm], [78.8, 92.4, 300.0])
+        self.assertEqual([mark.units for mark in tab.rhythm], [4, 2, 1])
+
+
+    def test_guitar_pro_trailing_margin_is_not_a_measure(self) -> None:
+        system = SimpleNamespace(
+            string_count=6,
+            char_width=3.8,
+            bars=[28.3, 455.0, 545.7, 549.9],
+            events=[SimpleNamespace(x=521.8)],
+        )
+
+        RUNNER.trim_guitar_pro_margins([system])
+
+        self.assertEqual(system.bars, [28.3, 455.0, 545.7])
 
 
 if __name__ == "__main__":
