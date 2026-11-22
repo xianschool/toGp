@@ -21,7 +21,7 @@
     "desktop:build": "npm run prepare:tab-converter && node scripts/package-macos.mjs"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.9.0",
+    "@tauri-apps/api": "^2.12.5",
     "@tauri-apps/plugin-dialog": "^2.4.0"
   },
   "devDependencies": {
